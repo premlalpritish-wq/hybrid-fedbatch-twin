@@ -1,28 +1,26 @@
 /**
- * hybrid-fedbatch-twin: Interactive Three.js 3D Stirred-Tank Bioreactor Viewport
- * Renders an orbitable 5 L benchtop borosilicate vessel or 1000 L industrial cutaway vessel
- * coupled in real time to volume V(t), biomass X_v(t), DO%, RPM shear tip speed v_tip,
- * aeration sparger vvm, and substrate feed rate F(t), with Canvas 2.5D fallback.
+ * Interactive Three.js 3D Stirred-Tank Bioreactor Assembly.
+ * Couples physical vessel geometry (5 L borosilicate or 1000 L cutaway) to live simulation
+ * state: V(t), X_v(t), DO%, v_tip, aeration vvm, and feed rate F(t), with Canvas 2D fallback.
  */
 
 (function (global) {
   "use strict";
 
   function clamp(v, lo, hi) {
-    return v < lo ? lo : (v > hi ? hi : v);
+    return v < lo ? lo : v > hi ? hi : v;
   }
 
   class Bioreactor3DView {
     constructor(containerEl, opts) {
       this.container = containerEl;
       this.opts = opts || {};
-      this.theme = this.opts.theme || "dark";
+      this.theme = this.opts.theme || "light";
       this.scaleL = 5;
       this.motionPaused = Boolean(
         global.matchMedia && global.matchMedia("(prefers-reduced-motion: reduce)").matches
       );
 
-      // Live physical state fed from twin simulation
       this.state = {
         t_h: 0.0,
         X_v: 1.5,
@@ -44,12 +42,11 @@
         d_m: 1.0,
       };
 
-      // Camera orbit spherical coordinates
       this.orbit = {
-        theta: 0.55,
-        phi: 1.22,
-        radius: 6.2,
-        targetY: 0.1,
+        theta: 0.54,
+        phi: 1.24,
+        radius: 8.0,
+        targetY: 0.24,
         dragging: false,
         lastX: 0,
         lastY: 0,
@@ -89,211 +86,478 @@
       this._loop(performance.now());
     }
 
+    _buildStudioEnvMap(THREE) {
+      // Procedural studio lightboxes so borosilicate glass and 316L steel show crisp reflections.
+      const pmrem = new THREE.PMREMGenerator(this.renderer);
+      pmrem.compileEquirectangularShader();
+      const envScene = new THREE.Scene();
+      envScene.background = new THREE.Color(0x283138);
+
+      const panelGeo = new THREE.PlaneGeometry(8, 8);
+      const overheadMat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+      const overhead = new THREE.Mesh(panelGeo, overheadMat);
+      overhead.position.set(0, 7, 0);
+      overhead.rotation.x = Math.PI / 2;
+      envScene.add(overhead);
+
+      const keyMat = new THREE.MeshBasicMaterial({ color: 0xfff8ed, side: THREE.DoubleSide });
+      const keyPanel = new THREE.Mesh(panelGeo, keyMat);
+      keyPanel.position.set(6.5, 3, 5);
+      keyPanel.lookAt(0, 0, 0);
+      envScene.add(keyPanel);
+
+      const fillMat = new THREE.MeshBasicMaterial({ color: 0xd9ece8, side: THREE.DoubleSide });
+      const fillPanel = new THREE.Mesh(panelGeo, fillMat);
+      fillPanel.position.set(-7, 2, -4);
+      fillPanel.lookAt(0, 0, 0);
+      envScene.add(fillPanel);
+
+      const target = pmrem.fromScene(envScene, 0.04);
+      panelGeo.dispose();
+      overheadMat.dispose();
+      keyMat.dispose();
+      fillMat.dispose();
+      pmrem.dispose();
+      return target;
+    }
+
+    _createContactShadowTexture(THREE) {
+      const cv = document.createElement("canvas");
+      cv.width = 128;
+      cv.height = 128;
+      const ctx = cv.getContext("2d");
+      const g = ctx.createRadialGradient(64, 64, 6, 64, 64, 62);
+      g.addColorStop(0, "rgba(17, 21, 24, 0.42)");
+      g.addColorStop(0.55, "rgba(17, 21, 24, 0.16)");
+      g.addColorStop(1, "rgba(17, 21, 24, 0.0)");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 128, 128);
+      const tex = new THREE.CanvasTexture(cv);
+      return tex;
+    }
+
     _initThreeJS(THREE) {
-      this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
+      this.renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        alpha: true,
+        powerPreference: "high-performance",
+      });
       this.renderer.setPixelRatio(Math.min(global.devicePixelRatio || 1, 2));
+      this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      this.renderer.toneMappingExposure = 1.05;
+      if (THREE.sRGBEncoding !== undefined) {
+        this.renderer.outputEncoding = THREE.sRGBEncoding;
+      }
       this.renderer.domElement.style.width = "100%";
       this.renderer.domElement.style.height = "100%";
       this.renderer.domElement.style.display = "block";
-      this.renderer.domElement.setAttribute("aria-label", "Interactive 3D Stirred-Tank Bioreactor Model");
+      this.renderer.domElement.setAttribute("aria-label", "Interactive 3D Stirred-Tank Bioreactor Assembly");
       this.container.appendChild(this.renderer.domElement);
+      this.backend = "webgl";
 
       this.scene = new THREE.Scene();
+      this._envRT = this._buildStudioEnvMap(THREE);
+      this.scene.environment = this._envRT.texture;
+
       const w = Math.max(200, this.container.clientWidth);
       const h = Math.max(200, this.container.clientHeight);
-      this.camera = new THREE.PerspectiveCamera(36, w / h, 0.1, 100);
+      this.camera = new THREE.PerspectiveCamera(35, w / h, 0.1, 100);
 
-      // Clean scientific studio lighting
-      this.ambientLight = new THREE.AmbientLight(0xdce6e4, 0.72);
+      // Ambient + key + cool fill lights required for PBR stainless and borosilicate glass.
+      this.ambientLight = new THREE.AmbientLight(0xf1f5f4, 0.55);
       this.scene.add(this.ambientLight);
-      this.keyLight = new THREE.DirectionalLight(0xffffff, 0.92);
-      this.keyLight.position.set(5.0, 7.5, 5.5);
+      this.keyLight = new THREE.DirectionalLight(0xfffdf8, 1.15);
+      this.keyLight.position.set(4.8, 7.2, 5.2);
       this.scene.add(this.keyLight);
-      this.rimLight = new THREE.DirectionalLight(0x2dd4bf, 0.45);
-      this.rimLight.position.set(-5.0, 3.0, -4.0);
+      this.rimLight = new THREE.DirectionalLight(0xbbe7e2, 0.45);
+      this.rimLight.position.set(-5.0, 2.5, -4.5);
       this.scene.add(this.rimLight);
 
       this.root = new THREE.Group();
       this.scene.add(this.root);
 
-      // Tank dimensions in scene units (normalized height ~ 3.2, radius ~ 0.95)
-      this.tankR = 0.96;
-      this.tankH = 3.1;
-      this.tankBottomY = -1.55;
+      this.tankR = 0.94;
+      this.tankH = 3.0;
+      this.tankBottomY = -1.5;
 
-      // 1. Structural Pedestal / Load-Cell Base (V weight measurement)
-      const metalDark = new THREE.MeshStandardMaterial({ color: 0x38434a, metalness: 0.75, roughness: 0.35 });
-      const metalBright = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.82, roughness: 0.22 });
-      const amberMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.3, roughness: 0.4, emissive: 0x78350f, emissiveIntensity: 0.35 });
-      const tealMat = new THREE.MeshStandardMaterial({ color: 0x2dd4bf, metalness: 0.25, roughness: 0.35, emissive: 0x0f766e, emissiveIntensity: 0.3 });
-
-      const baseDisk = new THREE.Mesh(new THREE.CylinderGeometry(1.16, 1.24, 0.16, 48), metalDark);
-      baseDisk.position.y = this.tankBottomY - 0.14;
-      this.root.add(baseDisk);
-
-      // Load-cell foot indicators
-      for (let i = 0; i < 4; i++) {
-        const ang = (i * Math.PI) / 2 + Math.PI / 4;
-        const foot = new THREE.Mesh(new THREE.CylinderGeometry(0.10, 0.12, 0.10, 16), amberMat);
-        foot.position.set(Math.cos(ang) * 0.95, this.tankBottomY - 0.26, Math.sin(ang) * 0.95);
-        this.root.add(foot);
-      }
-
-      // 2. Vessel Body (5L Glass vs 1000L Industrial Cutaway)
-      const glassMat = new THREE.MeshPhysicalMaterial({
-        color: 0xbde4df,
-        transparent: true,
-        opacity: 0.18,
-        roughness: 0.12,
+      // Machined 316L stainless, anodized dark steel, EPDM gasket, and PTFE insulator materials.
+      const steel316 = new THREE.MeshStandardMaterial({
+        color: 0xb8c2cc,
+        metalness: 0.88,
+        roughness: 0.24,
+      });
+      const steelMachined = new THREE.MeshStandardMaterial({
+        color: 0x8b98a6,
+        metalness: 0.84,
+        roughness: 0.32,
+      });
+      const metalDark = new THREE.MeshStandardMaterial({
+        color: 0x333c44,
+        metalness: 0.72,
+        roughness: 0.42,
+      });
+      const epdmSeal = new THREE.MeshStandardMaterial({
+        color: 0x1e2226,
         metalness: 0.05,
-        side: THREE.DoubleSide,
+        roughness: 0.82,
+      });
+      const ptfeMat = new THREE.MeshStandardMaterial({
+        color: 0xedeae2,
+        metalness: 0.04,
+        roughness: 0.48,
+      });
+      const copperFitting = new THREE.MeshStandardMaterial({
+        color: 0xb45309,
+        metalness: 0.58,
+        roughness: 0.34,
+      });
+
+      // Soft ground contact shadow under pedestal
+      this.shadowTex = this._createContactShadowTexture(THREE);
+      this.shadowMat = new THREE.MeshBasicMaterial({
+        map: this.shadowTex,
+        transparent: true,
+        opacity: 0.55,
         depthWrite: false,
       });
-      this.glassVessel = new THREE.Mesh(new THREE.CylinderGeometry(this.tankR, this.tankR, this.tankH, 48, 1, true), glassMat);
-      this.glassVessel.position.y = 0;
-      this.root.add(this.glassVessel);
+      const shadowDisk = new THREE.Mesh(new THREE.CircleGeometry(1.72, 48), this.shadowMat);
+      shadowDisk.rotation.x = -Math.PI / 2;
+      shadowDisk.position.y = this.tankBottomY - 0.34;
+      this.root.add(shadowDisk);
 
-      // Vessel bottom dish
+      // 1. Machined Pedestal Base, 4 Elastomer Feet, and 4 Load-Cell Flexure Blocks
+      const baseDeck = new THREE.Mesh(new THREE.CylinderGeometry(1.16, 1.24, 0.14, 48), metalDark);
+      baseDeck.position.y = this.tankBottomY - 0.15;
+      this.root.add(baseDeck);
+
+      const baseTrim = new THREE.Mesh(new THREE.TorusGeometry(1.18, 0.018, 12, 48), steelMachined);
+      baseTrim.rotation.x = Math.PI / 2;
+      baseTrim.position.y = this.tankBottomY - 0.08;
+      this.root.add(baseTrim);
+
+      for (let i = 0; i < 4; i++) {
+        const ang = (i * Math.PI) / 2 + Math.PI / 4;
+        const fx = Math.cos(ang) * 0.96;
+        const fz = Math.sin(ang) * 0.96;
+
+        const footPad = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.13, 0.08, 20), epdmSeal);
+        footPad.position.set(fx, this.tankBottomY - 0.28, fz);
+        this.root.add(footPad);
+
+        const loadCell = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.07, 0.16), copperFitting);
+        loadCell.position.set(fx * 0.85, this.tankBottomY - 0.06, fz * 0.85);
+        loadCell.rotation.y = -ang;
+        this.root.add(loadCell);
+      }
+
+      // 2. Lower Torispherical Dish & Bottom Harvest Valve
       const bottomDish = new THREE.Mesh(
-        new THREE.CylinderGeometry(this.tankR, this.tankR * 0.92, 0.14, 48),
-        metalBright
+        new THREE.CylinderGeometry(this.tankR + 0.03, this.tankR * 0.86, 0.16, 48),
+        steelMachined
       );
       bottomDish.position.y = this.tankBottomY;
       this.root.add(bottomDish);
 
-      // 1000 L Industrial Stainless Cutaway Jacket (visible only when scaleL === 1000)
+      const harvestStem = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.16, 16), steel316);
+      harvestStem.position.y = this.tankBottomY - 0.13;
+      this.root.add(harvestStem);
+
+      // 3. Borosilicate Glass Vessel Cylinder + Graduated Volume Scale Ticks
+      const glassMat = new THREE.MeshPhysicalMaterial({
+        color: 0xe6f2f0,
+        transparent: true,
+        opacity: 0.22,
+        roughness: 0.06,
+        metalness: 0.02,
+        clearcoat: 1.0,
+        clearcoatRoughness: 0.05,
+        ior: 1.47,
+        reflectivity: 0.9,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      this.glassVessel = new THREE.Mesh(
+        new THREE.CylinderGeometry(this.tankR, this.tankR, this.tankH, 56, 1, true),
+        glassMat
+      );
+      this.root.add(this.glassVessel);
+
+      // Graduated volume markings on front outer wall
+      this.tickMat = new THREE.MeshBasicMaterial({ color: 0x475569, transparent: true, opacity: 0.55 });
+      for (let g = 1; g <= 5; g++) {
+        const ty = this.tankBottomY + 0.1 + (g / 5.5) * (this.tankH - 0.25);
+        const tickArc = new THREE.Mesh(
+          new THREE.CylinderGeometry(this.tankR + 0.006, this.tankR + 0.006, 0.014, 16, 1, true, 0.32, 0.16),
+          this.tickMat
+        );
+        tickArc.position.y = ty;
+        this.root.add(tickArc);
+      }
+
+      // 4. 1000 L Stainless Steel Cutaway Jacket (visible only when scaleL >= 500)
       this.industrialGroup = new THREE.Group();
-      const steelJacketMat = new THREE.MeshStandardMaterial({
-        color: 0x64748b,
-        metalness: 0.78,
-        roughness: 0.32,
+      const jacketMat = new THREE.MeshStandardMaterial({
+        color: 0x748290,
+        metalness: 0.84,
+        roughness: 0.28,
         side: THREE.DoubleSide,
       });
-      // Back 210-degree stainless cutaway cylinder so broth & impellers stay clearly visible from front
       const jacketShell = new THREE.Mesh(
-        new THREE.CylinderGeometry(this.tankR + 0.04, this.tankR + 0.04, this.tankH * 0.92, 48, 1, true, Math.PI * 0.58, Math.PI * 1.25),
-        steelJacketMat
+        new THREE.CylinderGeometry(
+          this.tankR + 0.045,
+          this.tankR + 0.045,
+          this.tankH * 0.92,
+          52,
+          1,
+          true,
+          Math.PI * 0.62,
+          Math.PI * 1.24
+        ),
+        jacketMat
       );
       this.industrialGroup.add(jacketShell);
+
       for (const ry of [-1.05, -0.35, 0.35, 1.05]) {
-        const rib = new THREE.Mesh(new THREE.TorusGeometry(this.tankR + 0.055, 0.025, 12, 48), metalBright);
+        const rib = new THREE.Mesh(new THREE.TorusGeometry(this.tankR + 0.06, 0.028, 14, 52), steel316);
         rib.rotation.x = Math.PI / 2;
         rib.position.y = ry;
         this.industrialGroup.add(rib);
       }
+
+      // Side CIP / Jacket sanitary nozzles on industrial shell
+      for (const ny of [-0.85, 0.85]) {
+        const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.065, 0.22, 16), steel316);
+        nozzle.rotation.z = Math.PI / 2;
+        nozzle.position.set(-(this.tankR + 0.12), ny, -0.2);
+        this.industrialGroup.add(nozzle);
+
+        const flange = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.03, 18), steelMachined);
+        flange.rotation.z = Math.PI / 2;
+        flange.position.set(-(this.tankR + 0.22), ny, -0.2);
+        this.industrialGroup.add(flange);
+      }
       this.industrialGroup.visible = false;
       this.root.add(this.industrialGroup);
 
-      // Headplate + Drive Motor Housing
-      const headplate = new THREE.Mesh(new THREE.CylinderGeometry(this.tankR + 0.06, this.tankR + 0.06, 0.14, 48), metalBright);
-      headplate.position.y = this.tankBottomY + this.tankH + 0.06;
+      // 5. Sanitary Headplate, EPDM Seal, 12 Perimeter Flange Bolts, & Agitator Motor
+      const headY = this.tankBottomY + this.tankH + 0.06;
+      const epdmRing = new THREE.Mesh(new THREE.TorusGeometry(this.tankR + 0.01, 0.025, 12, 48), epdmSeal);
+      epdmRing.rotation.x = Math.PI / 2;
+      epdmRing.position.y = headY - 0.06;
+      this.root.add(epdmRing);
+
+      const headplate = new THREE.Mesh(
+        new THREE.CylinderGeometry(this.tankR + 0.08, this.tankR + 0.08, 0.12, 52),
+        steel316
+      );
+      headplate.position.y = headY;
       this.root.add(headplate);
 
-      const motorHousing = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.28, 0.55, 24), metalDark);
-      motorHousing.position.y = this.tankBottomY + this.tankH + 0.42;
-      this.root.add(motorHousing);
+      const headBevel = new THREE.Mesh(
+        new THREE.CylinderGeometry(this.tankR + 0.04, this.tankR + 0.08, 0.04, 52),
+        steelMachined
+      );
+      headBevel.position.y = headY + 0.08;
+      this.root.add(headBevel);
 
-      // 4 Internal Baffles
+      // 12 Hex Cap Bolts around headplate flange
+      const boltGeo = new THREE.CylinderGeometry(0.03, 0.03, 0.06, 6);
+      for (let i = 0; i < 12; i++) {
+        const ang = (i * Math.PI * 2) / 12;
+        const bolt = new THREE.Mesh(boltGeo, metalDark);
+        bolt.position.set(
+          Math.cos(ang) * (this.tankR + 0.02),
+          headY + 0.08,
+          Math.sin(ang) * (this.tankR + 0.02)
+        );
+        this.root.add(bolt);
+      }
+
+      // Mechanical Seal Pedestal & Ribbed Servo Drive Motor
+      const sealHousing = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 0.16, 24), steelMachined);
+      sealHousing.position.y = headY + 0.16;
+      this.root.add(sealHousing);
+
+      const motorBody = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.25, 0.46, 24), metalDark);
+      motorBody.position.y = headY + 0.46;
+      this.root.add(motorBody);
+
+      for (let fy = 0; fy < 4; fy++) {
+        const fin = new THREE.Mesh(new THREE.TorusGeometry(0.255, 0.012, 8, 28), steelMachined);
+        fin.rotation.x = Math.PI / 2;
+        fin.position.y = headY + 0.32 + fy * 0.09;
+        this.root.add(fin);
+      }
+
+      const encoderCap = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 0.1, 20), steel316);
+      encoderCap.position.y = headY + 0.72;
+      this.root.add(encoderCap);
+
+      // Headplate Instrumentation Ports: Exhaust Condenser, Pressure Gauge, Feed Port
+      const condenserCol = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.48, 16), steel316);
+      condenserCol.position.set(-0.48, headY + 0.32, -0.32);
+      this.root.add(condenserCol);
+      const ventFilter = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.085, 0.14, 18), ptfeMat);
+      ventFilter.position.set(-0.48, headY + 0.6, -0.32);
+      this.root.add(ventFilter);
+
+      // Diaphragm Pressure Gauge (front right of headplate)
+      const gaugeStem = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.18, 12), steel316);
+      gaugeStem.position.set(0.54, headY + 0.16, 0.34);
+      this.root.add(gaugeStem);
+      const gaugeCase = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.05, 24), steel316);
+      gaugeCase.rotation.x = Math.PI / 2;
+      gaugeCase.rotation.z = -0.35;
+      gaugeCase.position.set(0.54, headY + 0.28, 0.34);
+      this.root.add(gaugeCase);
+      const gaugeFace = new THREE.Mesh(
+        new THREE.CircleGeometry(0.095, 24),
+        new THREE.MeshBasicMaterial({ color: 0xf7f6f2 })
+      );
+      gaugeFace.rotation.y = 0.35;
+      gaugeFace.position.set(0.54 + Math.sin(0.35) * 0.028, headY + 0.28, 0.34 + Math.cos(0.35) * 0.028);
+      this.root.add(gaugeFace);
+
+      // 6. 4 Internal Wall Baffles with Mounting Standoffs
       for (let b = 0; b < 4; b++) {
         const ang = (b * Math.PI) / 2 + Math.PI / 4;
-        const baffle = new THREE.Mesh(new THREE.BoxGeometry(0.08, this.tankH * 0.88, 0.02), metalBright);
-        baffle.position.set(Math.cos(ang) * (this.tankR - 0.06), 0, Math.sin(ang) * (this.tankR - 0.06));
+        const bx = Math.cos(ang) * (this.tankR - 0.075);
+        const bz = Math.sin(ang) * (this.tankR - 0.075);
+        const baffle = new THREE.Mesh(new THREE.BoxGeometry(0.085, this.tankH * 0.86, 0.018), steel316);
+        baffle.position.set(bx, 0, bz);
         baffle.rotation.y = -ang;
         this.root.add(baffle);
       }
 
-      // 3. Dynamic Working Volume Broth Cylinder + Meniscus Top
+      // 7. Dynamic Broth Cylinder + Meniscus Ring
       this.brothMat = new THREE.MeshPhysicalMaterial({
         color: 0x1e6b63,
         transparent: true,
-        opacity: 0.48,
-        roughness: 0.25,
+        opacity: 0.44,
+        roughness: 0.18,
         metalness: 0.02,
+        clearcoat: 0.6,
         depthWrite: false,
       });
-      this.brothCyl = new THREE.Mesh(new THREE.CylinderGeometry(this.tankR - 0.025, this.tankR - 0.025, 1.0, 44), this.brothMat);
+      this.brothCyl = new THREE.Mesh(
+        new THREE.CylinderGeometry(this.tankR - 0.022, this.tankR - 0.022, 1.0, 48),
+        this.brothMat
+      );
       this.root.add(this.brothCyl);
 
-      this.meniscusMat = new THREE.MeshBasicMaterial({ color: 0x2dd4bf, transparent: true, opacity: 0.55, side: THREE.DoubleSide });
-      this.meniscusDisk = new THREE.Mesh(new THREE.RingGeometry(0.06, this.tankR - 0.025, 44), this.meniscusMat);
+      this.meniscusMat = new THREE.MeshBasicMaterial({
+        color: 0x0f766e,
+        transparent: true,
+        opacity: 0.5,
+        side: THREE.DoubleSide,
+      });
+      this.meniscusDisk = new THREE.Mesh(new THREE.RingGeometry(0.06, this.tankR - 0.022, 48), this.meniscusMat);
       this.meniscusDisk.rotation.x = -Math.PI / 2;
       this.root.add(this.meniscusDisk);
 
-      // 4. Central Shaft + Dual 6-Blade Rushton Turbines
+      // 8. Central Shaft & Dual 6-Blade Rushton Turbines
       this.impellerGroup = new THREE.Group();
-      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, this.tankH + 0.15, 16), metalBright);
-      shaft.position.y = 0.05;
+      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.044, 0.044, this.tankH + 0.16, 20), steel316);
+      shaft.position.y = 0.06;
       this.impellerGroup.add(shaft);
 
-      const bladeGeo = new THREE.BoxGeometry(0.18, 0.14, 0.022);
-      for (const yPos of [-0.95, -0.15]) {
-        const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.05, 24), metalBright);
+      const bladeGeo = new THREE.BoxGeometry(0.18, 0.14, 0.02);
+      for (const yPos of [-0.92, -0.14]) {
+        const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.07, 24), steelMachined);
         hub.position.y = yPos;
         this.impellerGroup.add(hub);
 
-        const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.30, 0.30, 0.018, 24), metalDark);
+        const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.29, 0.29, 0.018, 28), steel316);
         disc.position.y = yPos;
         this.impellerGroup.add(disc);
 
         for (let k = 0; k < 6; k++) {
           const ang = (k * Math.PI) / 3;
-          const blade = new THREE.Mesh(bladeGeo, metalBright);
-          blade.position.set(Math.cos(ang) * 0.28, yPos, Math.sin(ang) * 0.28);
+          const blade = new THREE.Mesh(bladeGeo, steel316);
+          blade.position.set(Math.cos(ang) * 0.275, yPos, Math.sin(ang) * 0.275);
           blade.rotation.y = -ang;
           this.impellerGroup.add(blade);
         }
       }
       this.root.add(this.impellerGroup);
 
-      // Shear Stress Halo Ring around lower impeller (reacts to v_tip)
-      this.shearMat = new THREE.MeshBasicMaterial({ color: 0x2dd4bf, transparent: true, opacity: 0.48, side: THREE.DoubleSide });
-      this.shearRing = new THREE.Mesh(new THREE.RingGeometry(0.40, 0.54, 48), this.shearMat);
+      // Subtle hydrodynamic radial wake ring inside the broth around the lower impeller
+      this.shearMat = new THREE.MeshBasicMaterial({
+        color: 0x0f766e,
+        transparent: true,
+        opacity: 0.26,
+        side: THREE.DoubleSide,
+      });
+      this.shearRing = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.5, 48), this.shearMat);
       this.shearRing.rotation.x = -Math.PI / 2;
-      this.shearRing.position.y = -0.95;
+      this.shearRing.position.y = -0.92;
       this.root.add(this.shearRing);
 
-      // 5. Ring Sparger & Gas Inlet Pipe
-      const spargerRing = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.032, 12, 36), metalBright);
+      // 9. Ring Sparger & Vertical Gas Supply Downcomer
+      const spargerRing = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.028, 12, 36), steel316);
       spargerRing.rotation.x = Math.PI / 2;
       spargerRing.position.y = this.tankBottomY + 0.22;
       this.root.add(spargerRing);
 
-      // 6. Top Feed Nozzle & Nutrient Droplets
-      const feedPipe = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, 0.55, 12), amberMat);
-      feedPipe.position.set(0.42, this.tankBottomY + this.tankH + 0.16, 0.18);
+      const spargerPipe = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, this.tankH - 0.18, 12), steel316);
+      spargerPipe.position.set(0, 0.08, -0.42);
+      this.root.add(spargerPipe);
+
+      // 10. Sterile Feed Port, Elbow, & Nutrient Droplet Stream
+      const feedCollar = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.08, 16), steelMachined);
+      feedCollar.position.set(0.4, headY + 0.09, 0.16);
+      this.root.add(feedCollar);
+
+      const feedPipe = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.56, 12), copperFitting);
+      feedPipe.position.set(0.4, headY + 0.06, 0.16);
       this.root.add(feedPipe);
 
       this.dropGroup = new THREE.Group();
-      const dropGeo = new THREE.SphereGeometry(0.030, 8, 8);
+      const dropGeo = new THREE.SphereGeometry(0.026, 8, 8);
       for (let i = 0; i < 12; i++) {
-        const drop = new THREE.Mesh(dropGeo, amberMat);
+        const drop = new THREE.Mesh(dropGeo, copperFitting);
         this.dropGroup.add(drop);
         this._dropSeeds.push({ phase: i / 12 });
       }
       this.root.add(this.dropGroup);
 
-      // 7. In-Situ PAT Sensor Probes (Dielectric Capacitance X_v + Optical DO C_L)
-      const capProbe = new THREE.Mesh(new THREE.CylinderGeometry(0.030, 0.030, 2.35, 12), tealMat);
-      capProbe.position.set(-0.52, 0.52, 0.28);
+      // 11. In-Situ PAT Sensor Probes (Capacitance Biomass + Optical DO with Sensing Cap)
+      const capCollar = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.1, 16), steelMachined);
+      capCollar.position.set(-0.5, headY + 0.1, 0.28);
+      this.root.add(capCollar);
+      const capProbe = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 2.38, 14), steel316);
+      capProbe.position.set(-0.5, 0.54, 0.28);
       this.root.add(capProbe);
+      const capTip = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.024, 0.18, 14), ptfeMat);
+      capTip.position.set(-0.5, -0.72, 0.28);
+      this.root.add(capTip);
 
-      this.doTipMat = new THREE.MeshStandardMaterial({ color: 0x2dd4bf, emissive: 0x2dd4bf, emissiveIntensity: 0.65 });
-      const doProbeBody = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 2.25, 12), metalBright);
-      doProbeBody.position.set(-0.28, 0.56, -0.48);
+      const doCollar = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.1, 16), steelMachined);
+      doCollar.position.set(-0.28, headY + 0.1, -0.46);
+      this.root.add(doCollar);
+      const doProbeBody = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.026, 2.26, 14), steel316);
+      doProbeBody.position.set(-0.28, 0.58, -0.46);
       this.root.add(doProbeBody);
-      const doProbeTip = new THREE.Mesh(new THREE.SphereGeometry(0.048, 12, 12), this.doTipMat);
-      doProbeTip.position.set(-0.28, -0.58, -0.48);
+
+      this.doTipMat = new THREE.MeshStandardMaterial({
+        color: 0x0f766e,
+        emissive: 0x0f766e,
+        emissiveIntensity: 0.35,
+        roughness: 0.3,
+      });
+      const doProbeTip = new THREE.Mesh(new THREE.SphereGeometry(0.044, 14, 14), this.doTipMat);
+      doProbeTip.position.set(-0.28, -0.58, -0.46);
       this.root.add(doProbeTip);
 
-      // 8. Instanced Rising Sparger Bubbles (max 220 bubbles)
+      // 12. Instanced Rising Sparger Micro-Bubbles
       this.maxBubbles = 220;
-      const bubGeo = new THREE.SphereGeometry(0.024, 8, 8);
-      const bubMat = new THREE.MeshBasicMaterial({ color: 0xdcfcf7, transparent: true, opacity: 0.72 });
+      const bubGeo = new THREE.SphereGeometry(0.021, 8, 8);
+      const bubMat = new THREE.MeshBasicMaterial({ color: 0xe2f5f2, transparent: true, opacity: 0.72 });
       this.bubbleMesh = new THREE.InstancedMesh(bubGeo, bubMat, this.maxBubbles);
       this.bubbleDummy = new THREE.Object3D();
       for (let i = 0; i < this.maxBubbles; i++) {
         const ang = (i * 2.39996) % (Math.PI * 2);
-        const rad = 0.25 + 0.58 * ((i * 17) % 100) / 100;
+        const rad = 0.25 + (0.58 * ((i * 17) % 100)) / 100;
         this._bubbleSeeds.push({
           yFrac: Math.random(),
           ang: ang,
@@ -361,7 +625,7 @@
         "wheel",
         (e) => {
           e.preventDefault();
-          this.orbit.radius = clamp(this.orbit.radius + e.deltaY * 0.004, 3.8, 9.5);
+          this.orbit.radius = clamp(this.orbit.radius + e.deltaY * 0.004, 4.8, 10.5);
           this._updateCamera();
         },
         { passive: false }
@@ -379,9 +643,10 @@
     }
 
     resetCamera() {
-      this.orbit.theta = 0.55;
-      this.orbit.phi = 1.22;
-      this.orbit.radius = 6.2;
+      this.orbit.theta = 0.54;
+      this.orbit.phi = 1.24;
+      this.orbit.radius = 8.0;
+      this.orbit.targetY = 0.24;
       this._updateCamera();
     }
 
@@ -396,11 +661,21 @@
       this.theme = theme;
       if (this.backend === "webgl" && this.ambientLight) {
         if (theme === "light") {
-          this.ambientLight.intensity = 0.92;
-          this.keyLight.intensity = 1.05;
-        } else {
           this.ambientLight.intensity = 0.72;
-          this.keyLight.intensity = 0.92;
+          this.keyLight.intensity = 1.15;
+          if (this.shadowMat) this.shadowMat.opacity = 0.42;
+          if (this.tickMat) {
+            this.tickMat.color.setHex(0x475569);
+            this.tickMat.opacity = 0.55;
+          }
+        } else {
+          this.ambientLight.intensity = 0.52;
+          this.keyLight.intensity = 1.05;
+          if (this.shadowMat) this.shadowMat.opacity = 0.65;
+          if (this.tickMat) {
+            this.tickMat.color.setHex(0x94a3b8);
+            this.tickMat.opacity = 0.45;
+          }
         }
       }
     }
@@ -420,6 +695,7 @@
         this.camera.aspect = w / h;
         this.camera.updateProjectionMatrix();
         this.renderer.setSize(w, h, false);
+        this._updateCamera();
       } else if (this.canvas) {
         const dpr = Math.min(global.devicePixelRatio || 1, 2);
         this.canvas.width = Math.round(w * dpr);
@@ -452,39 +728,36 @@
         this.brothCyl.position.y = brothCenterY;
         this.meniscusDisk.position.y = this.tankBottomY + brothH + 0.04;
 
-        // Broth color deepens with X_v density, warms toward amber under high acetate/DO stress
-        const rCol = 0.08 + 0.42 * xvNorm + (doLow ? 0.18 : 0.0);
-        const gCol = 0.44 - 0.10 * xvNorm + (doLow ? -0.10 : 0.08);
-        const bCol = 0.41 - 0.24 * xvNorm;
+        // Broth turbidity deepens with biomass X_v and shifts warmer under oxygen limitation.
+        const rCol = 0.07 + 0.44 * xvNorm + (doLow ? 0.16 : 0.0);
+        const gCol = 0.43 - 0.11 * xvNorm + (doLow ? -0.1 : 0.06);
+        const bCol = 0.40 - 0.24 * xvNorm;
         this.brothMat.color.setRGB(clamp(rCol, 0, 1), clamp(gCol, 0, 1), clamp(bCol, 0, 1));
-        this.brothMat.opacity = 0.36 + 0.28 * xvNorm;
+        this.brothMat.opacity = 0.34 + 0.28 * xvNorm;
 
-        // DO probe emissive tip warns on hypoxia
         if (doLow) {
-          this.doTipMat.color.setHex(0xf87171);
-          this.doTipMat.emissive.setHex(0xef4444);
+          this.doTipMat.color.setHex(0xb91c1c);
+          this.doTipMat.emissive.setHex(0x991b1b);
         } else {
-          this.doTipMat.color.setHex(0x2dd4bf);
-          this.doTipMat.emissive.setHex(0x0f766e);
+          this.doTipMat.color.setHex(0x0f766e);
+          this.doTipMat.emissive.setHex(0x0d6861);
         }
 
-        // Shear stress ring color: teal (safe) -> amber (moderate shear) -> crimson (high lysis)
         if (s.v_tip > 2.15) {
-          this.shearMat.color.setHex(0xf87171);
-          this.shearMat.opacity = 0.65;
+          this.shearMat.color.setHex(0xb91c1c);
+          this.shearMat.opacity = 0.46;
         } else if (highShear) {
-          this.shearMat.color.setHex(0xf59e0b);
-          this.shearMat.opacity = 0.55;
+          this.shearMat.color.setHex(0xb45309);
+          this.shearMat.opacity = 0.38;
         } else {
-          this.shearMat.color.setHex(0x2dd4bf);
-          this.shearMat.opacity = 0.32;
+          this.shearMat.color.setHex(0x0f766e);
+          this.shearMat.opacity = 0.22;
         }
 
         if (!this.motionPaused) {
           this.impellerGroup.rotation.y += dt * 7.5 * rpmNorm;
         }
 
-        // Sparger bubbles rising through active liquid height
         const activeCount = Math.round(clamp(45 + 95 * vvmNorm, 25, this.maxBubbles));
         const liqBot = this.tankBottomY + 0.24;
         const liqTop = this.tankBottomY + brothH + 0.02;
@@ -515,7 +788,6 @@
         }
         this.bubbleMesh.instanceMatrix.needsUpdate = true;
 
-        // Top feed nutrient droplet stream
         const topNozzleY = this.tankBottomY + this.tankH - 0.12;
         const dropSpan = Math.max(0.2, topNozzleY - liqTop);
         const visibleDrops = feedNorm > 0.02 ? Math.max(2, Math.round(6 * clamp(feedNorm, 0, 2))) : 0;
@@ -531,7 +803,7 @@
             ds.phase += dt * (1.2 + 0.8 * feedNorm);
             if (ds.phase > 1.0) ds.phase -= 1.0;
           }
-          drop.position.set(0.42, topNozzleY - ds.phase * dropSpan, 0.18);
+          drop.position.set(0.4, topNozzleY - ds.phase * dropSpan, 0.16);
         }
 
         this.renderer.render(this.scene, this.camera);
@@ -547,50 +819,46 @@
       ctx.clearRect(0, 0, w, h);
 
       const isLight = this.theme === "light";
-      const bgLine = isLight ? "#9a958b" : "#3a4650";
-      const steelCol = isLight ? "#4a5568" : "#94a3b8";
-      const textCol = isLight ? "#181a1b" : "#e2e8f0";
+      const steelCol = isLight ? "#4a5056" : "#a7b2bc";
+      const textCol = isLight ? "#181a1b" : "#eceff1";
+      const gtCol = isLight ? "#0f766e" : "#2dd4bf";
+      const hybCol = isLight ? "#b45309" : "#f59e0b";
+      const alertCol = isLight ? "#b91c1c" : "#f87171";
 
       const tankW = Math.min(w * 0.44, 175);
-      const tankH = Math.min(h * 0.66, 260);
+      const tankH = Math.min(h * 0.66, 250);
       const cx = w * 0.5;
-      const topY = h * 0.16;
+      const topY = h * 0.17;
       const leftX = cx - tankW / 2;
-      const rightX = cx + tankW / 2;
       const botY = topY + tankH;
 
-      // Industrial cutaway framing when 1000L
       if (this.scaleL >= 500) {
-        ctx.fillStyle = isLight ? "rgba(100,116,139,0.22)" : "rgba(100,116,139,0.28)";
+        ctx.fillStyle = isLight ? "rgba(74, 80, 86, 0.16)" : "rgba(167, 178, 188, 0.18)";
         ctx.fillRect(leftX - 8, topY + 6, tankW + 16, tankH - 12);
       }
 
-      // Dynamic Broth Fill
       const liqH = tankH * fillFrac;
       const liqY = botY - liqH;
-      const grad = ctx.createLinearGradient(cx, liqY, cx, botY);
-      grad.addColorStop(0, doLow ? "rgba(248, 113, 113, 0.45)" : "rgba(45, 212, 191, 0.36)");
-      grad.addColorStop(1, "rgba(245, 158, 11, " + (0.20 + 0.40 * xvNorm).toFixed(2) + ")");
-      ctx.fillStyle = grad;
+      ctx.fillStyle = doLow
+        ? "rgba(185, 28, 28, 0.34)"
+        : "rgba(15, 118, 110, " + (0.24 + 0.32 * xvNorm).toFixed(2) + ")";
       ctx.fillRect(leftX + 2, liqY, tankW - 4, liqH);
 
-      // Meniscus arc
       ctx.beginPath();
-      ctx.ellipse(cx, liqY, tankW / 2 - 2, 10, 0, 0, Math.PI * 2);
-      ctx.fillStyle = doLow ? "rgba(248,113,113,0.45)" : "rgba(45,212,191,0.42)";
+      ctx.ellipse(cx, liqY, tankW / 2 - 2, 8, 0, 0, Math.PI * 2);
+      ctx.fillStyle = doLow ? alertCol : gtCol;
+      ctx.globalAlpha = 0.38;
       ctx.fill();
+      ctx.globalAlpha = 1.0;
 
-      // Vessel Glass Outline
       ctx.strokeStyle = steelCol;
       ctx.lineWidth = 2;
       ctx.strokeRect(leftX, topY, tankW, tankH);
 
-      // Headplate & Motor
       ctx.fillStyle = steelCol;
       ctx.fillRect(leftX - 10, topY - 12, tankW + 20, 12);
       ctx.fillRect(cx - 18, topY - 40, 36, 28);
 
-      // Central Shaft & Dual Impellers
       ctx.beginPath();
       ctx.moveTo(cx, topY - 12);
       ctx.lineTo(cx, botY - 16);
@@ -599,14 +867,13 @@
       ctx.stroke();
 
       if (!this.motionPaused) this._impellerAngle += dt * 7.5 * rpmNorm;
-      const bladeSpan = (tankW * 0.28) * Math.max(0.25, Math.abs(Math.cos(this._impellerAngle)));
+      const bladeSpan = tankW * 0.28 * Math.max(0.25, Math.abs(Math.cos(this._impellerAngle)));
       for (const iy of [botY - tankH * 0.25, botY - tankH * 0.56]) {
-        ctx.fillStyle = highShear ? "#f59e0b" : "#cbd5e1";
-        ctx.fillRect(cx - bladeSpan, iy - 6, bladeSpan * 2, 12);
+        ctx.fillStyle = highShear ? hybCol : steelCol;
+        ctx.fillRect(cx - bladeSpan, iy - 5, bladeSpan * 2, 10);
       }
 
-      // Sparger & Bubbles
-      ctx.strokeStyle = "#2dd4bf";
+      ctx.strokeStyle = gtCol;
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(cx - tankW * 0.25, botY - 14);
@@ -614,7 +881,7 @@
       ctx.stroke();
 
       const activeBubbles = Math.round(clamp(16 + 32 * vvmNorm, 8, this._bubbleSeeds.length));
-      ctx.fillStyle = isLight ? "rgba(15, 118, 110, 0.55)" : "rgba(220, 252, 247, 0.65)";
+      ctx.fillStyle = isLight ? "rgba(15, 118, 110, 0.55)" : "rgba(226, 245, 242, 0.68)";
       for (let i = 0; i < activeBubbles; i++) {
         const bs = this._bubbleSeeds[i];
         if (!this.motionPaused) {
@@ -622,15 +889,14 @@
           if (bs.yFrac > 1.0) bs.yFrac -= 1.0;
         }
         const bx = cx + bs.xNorm * (tankW * 0.36);
-        const by = (botY - 16) - bs.yFrac * Math.max(10, liqH - 18);
+        const by = botY - 16 - bs.yFrac * Math.max(10, liqH - 18);
         ctx.beginPath();
         ctx.arc(bx, by, bs.r, 0, Math.PI * 2);
         ctx.fill();
       }
 
-      // Feed Line
       if (feedNorm > 0.02) {
-        ctx.strokeStyle = "#f59e0b";
+        ctx.strokeStyle = hybCol;
         ctx.lineWidth = 2;
         ctx.setLineDash([4, 4]);
         ctx.beginPath();
@@ -640,8 +906,6 @@
         ctx.setLineDash([]);
       }
 
-      // Probe indicators
-      ctx.strokeStyle = bgLine;
       ctx.font = '11px "IBM Plex Mono", monospace';
       ctx.fillStyle = textCol;
       ctx.fillText(this.scaleL + " L Vessel", leftX, topY - 18);
@@ -650,6 +914,8 @@
     destroy() {
       if (this._rafId) global.cancelAnimationFrame(this._rafId);
       if (this._ro) this._ro.disconnect();
+      if (this._envRT && this._envRT.dispose) this._envRT.dispose();
+      if (this.shadowTex && this.shadowTex.dispose) this.shadowTex.dispose();
       if (this.renderer && this.renderer.dispose) this.renderer.dispose();
     }
   }

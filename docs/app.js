@@ -1,5 +1,5 @@
 /**
- * hybrid-fedbatch-twin: UI Controller, High-DPI Telemetry Charts, and Case-Study Hydrator
+ * UI controller, high-DPI multi-trace telemetry charts, and bundle hydrator.
  * Connects Bioreactor3DView + HybridTwinEngine + exported GAM-86 (B=15) bundle.
  */
 
@@ -9,6 +9,10 @@
   function fmt(v, digits) {
     if (v == null || !Number.isFinite(v)) return "--";
     return Number(v).toFixed(digits == null ? 2 : digits);
+  }
+
+  function clampVal(v, lo, hi) {
+    return v < lo ? lo : v > hi ? hi : v;
   }
 
   function escapeHtml(str) {
@@ -23,15 +27,18 @@
     const cs = getComputedStyle(document.documentElement);
     const get = (k, fb) => cs.getPropertyValue(k).trim() || fb;
     return {
-      bg: get("--bg", "#101715"),
-      surface: get("--surface", "#171f1c"),
-      line: get("--line", "#293631"),
-      ink: get("--ink", "#edf2ed"),
-      muted: get("--muted", "#98a69f"),
-      gt: get("--gt", "#2dd4bf"),
-      hyb: get("--hyb", "#f59e0b"),
-      nom: get("--nom", "#8a99ad"),
-      alert: get("--alert", "#f87171"),
+      bg: get("--bg-canvas", "#f7f6f2"),
+      panel: get("--bg-panel", "#efece6"),
+      border: get("--border-subtle", "#d5d0c5"),
+      ink: get("--ink-primary", "#181a1b"),
+      muted: get("--ink-secondary", "#4a5056"),
+      gt: get("--trace-gt", "#0f766e"),
+      gtInk: get("--trace-gt-ink", "#0d6861"),
+      hyb: get("--trace-hyb", "#b45309"),
+      hybInk: get("--trace-hyb-ink", "#92400e"),
+      hybBand: get("--trace-hyb-band", "rgba(180, 83, 9, 0.16)"),
+      nom: get("--trace-nom", "#475569"),
+      alert: get("--trace-alert", "#b91c1c"),
     };
   }
 
@@ -42,17 +49,16 @@
     const statusText = document.getElementById("sim-status-text");
 
     if (!bundle || !engine) {
-      if (statusBanner) statusBanner.classList.add("warning");
+      if (statusBanner) statusBanner.setAttribute("data-state", "error");
       if (statusText) {
         statusText.textContent =
-          "Error: Failed to load twin_bundle.js or twin_engine.js. Check assets path and reload.";
+          "[ERROR] Failed to load twin_bundle.js or twin_engine.js. Verify docs/assets path and reload.";
       }
       return;
     }
 
-    // Application state
     const appState = {
-      theme: localStorage.getItem("hft_theme") || "dark",
+      theme: localStorage.getItem("hft_theme_v2") || "light",
       scaleL: 5,
       controlMode: "closed_loop",
       muTarget: 0.28,
@@ -68,8 +74,9 @@
       reactor3D: null,
     };
 
-    // DOM Elements
     const elThemeBtn = document.getElementById("theme-toggle-btn");
+    const elMobileNavBtn = document.getElementById("mobile-nav-toggle");
+    const elPrimaryNav = document.getElementById("primary-nav");
     const elScale5Btn = document.getElementById("scale-5l-btn");
     const elScale1000Btn = document.getElementById("scale-1000l-btn");
     const elVesselLabel = document.getElementById("vessel-mode-label");
@@ -98,16 +105,39 @@
     const elResetCamBtn = document.getElementById("reset-camera-btn");
     const elResetDefBtn = document.getElementById("reset-defaults-btn");
 
+    // Mobile navigation drawer with Escape support
+    if (elMobileNavBtn && elPrimaryNav) {
+      function setNavOpen(open) {
+        elPrimaryNav.classList.toggle("open", open);
+        elMobileNavBtn.setAttribute("aria-expanded", open ? "true" : "false");
+        elMobileNavBtn.textContent = open ? "Close" : "Menu";
+      }
+
+      elMobileNavBtn.addEventListener("click", function () {
+        setNavOpen(!elPrimaryNav.classList.contains("open"));
+      });
+
+      elPrimaryNav.querySelectorAll("a").forEach((link) => {
+        link.addEventListener("click", () => setNavOpen(false));
+      });
+
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape" && elPrimaryNav.classList.contains("open")) {
+          setNavOpen(false);
+          elMobileNavBtn.focus();
+        }
+      });
+    }
+
     function applyTheme(nextTheme) {
       appState.theme = nextTheme;
       document.documentElement.setAttribute("data-theme", nextTheme);
-      localStorage.setItem("hft_theme", nextTheme);
+      localStorage.setItem("hft_theme_v2", nextTheme);
       elThemeBtn.textContent = nextTheme === "light" ? "Theme: Light" : "Theme: Dark";
       if (appState.reactor3D) appState.reactor3D.setTheme(nextTheme);
       drawAllCharts();
     }
 
-    // Initialize Theme + 3D Reactor View
     const host3d = document.getElementById("reactor-3d-host");
     if (global.Bioreactor3DView && host3d) {
       appState.reactor3D = new global.Bioreactor3DView(host3d, { theme: appState.theme });
@@ -117,7 +147,6 @@
     }
     applyTheme(appState.theme);
 
-    // Sync slider labels & bounds for current scale
     function syncControlUI() {
       const sf = appState.scaleL / 5.0;
       if (appState.scaleL === 1000) {
@@ -141,7 +170,7 @@
         elSliderFeed.min = "0.01";
         elSliderFeed.max = "0.28";
         elSliderFeed.step = "0.005";
-        elVesselLabel.textContent = "5 L Glass Benchtop";
+        elVesselLabel.textContent = "5 L Borosilicate Benchtop";
       }
 
       elSliderMu.value = String(appState.muTarget);
@@ -166,19 +195,28 @@
     }
 
     function runAndRenderSimulation() {
+      if (statusBanner) statusBanner.setAttribute("data-state", "loading");
       const t0 = performance.now();
-      appState.sim = engine.runTwinSimulation(
-        {
-          scaleL: appState.scaleL,
-          controlMode: appState.controlMode,
-          muTarget: appState.muTarget,
-          manualFeedRate: appState.manualFeedRate,
-          rpm: appState.rpm,
-          vvm: appState.vvm,
-          disturbanceMode: appState.disturbanceMode,
-        },
-        bundle
-      );
+      try {
+        appState.sim = engine.runTwinSimulation(
+          {
+            scaleL: appState.scaleL,
+            controlMode: appState.controlMode,
+            muTarget: appState.muTarget,
+            manualFeedRate: appState.manualFeedRate,
+            rpm: appState.rpm,
+            vvm: appState.vvm,
+            disturbanceMode: appState.disturbanceMode,
+          },
+          bundle
+        );
+      } catch (err) {
+        if (statusBanner) statusBanner.setAttribute("data-state", "error");
+        if (statusText) {
+          statusText.textContent = "[ERROR] Simulation failed: " + (err && err.message ? err.message : String(err));
+        }
+        return;
+      }
       const dtMs = performance.now() - t0;
       elTimingBadge.textContent = fmt(dtMs, 1) + " ms (160 steps, B=15 EKF)";
       renderFrameAt(appState.timeIdx);
@@ -199,11 +237,9 @@
       const u = sim.inputs[i];
       const tH = sim.t[i];
       const doEstPct = (100.0 * xEst[3]) / sim.C_star;
-      const doTruePct = (100.0 * xTrue[3]) / sim.C_star;
       const inDom = Boolean(sim.inDomain[i]);
       const dm = sim.d_m[i];
 
-      // Update 3D Reactor State
       if (appState.reactor3D) {
         appState.reactor3D.updateState({
           t_h: tH,
@@ -227,45 +263,43 @@
         });
       }
 
-      // 3D Viewport HUD pills
-      document.getElementById("hud-time").textContent = "t = " + fmt(tH, 1) + " h / 16.0 h";
+      document.getElementById("hud-time").textContent = "t = " + fmt(tH, 1) + " h";
       const hudDov = document.getElementById("hud-dov");
       if (inDom) {
-        hudDov.className = "hud-pill ok";
+        hudDov.className = "figure-dov-status";
         hudDov.textContent = "DoV IN-DOMAIN (D_M = " + fmt(dm, 2) + " <= " + fmt(sim.p99Global, 2) + ")";
       } else {
-        hudDov.className = "hud-pill ood";
+        hudDov.className = "figure-dov-status ood";
         hudDov.textContent = "OOD PRIOR RELAXED (D_M = " + fmt(dm, 2) + ")";
       }
       document.getElementById("hud-pgv").textContent = "Pg/V: " + fmt(sim.Pg_V[i], 0) + " W/m3";
       document.getElementById("hud-vtip").textContent = "v_tip: " + fmt(sim.v_tip[i], 2) + " m/s";
-      document.getElementById("hud-kla").textContent = "k_L a: " + fmt(sim.klaHyb[i], 0) + " 1/h";
+      document.getElementById("hud-kla").textContent = "k_La: " + fmt(sim.klaHyb[i], 0) + " 1/h";
 
-      // Top status banner
       const summ = sim.summary;
       const redPct = 100.0 * (1.0 - summ.rmse_ratio);
       if (!inDom || summ.ood_fraction > 0.15) {
-        statusBanner.classList.add("warning");
+        statusBanner.setAttribute("data-state", "warning");
         statusText.textContent =
-          "Out-of-Domain alert at t=" +
+          "[OOD ALERT] t=" +
           fmt(tH, 1) +
           " h (D_M=" +
           fmt(dm, 2) +
           " > p99=" +
           fmt(sim.p99Global, 2) +
-          "): metabolic heads smoothly relax toward mechanistic prior while inflating sigma.";
+          "): metabolic heads relax toward mechanistic prior while inflating sigma.";
       } else {
-        statusBanner.classList.remove("warning");
+        statusBanner.setAttribute("data-state", "ready");
         statusText.textContent =
+          "[NOMINAL] " +
           appState.scaleL +
-          " L Twin Ready | Full-batch Hybrid EKF cut error by " +
+          " L Twin Active: full-batch Hybrid EKF cut error by " +
           fmt(redPct, 1) +
           "% vs Nominal EKF (Ratio " +
           fmt(summ.rmse_ratio, 3) +
           "x).";
       }
 
-      // 8 KPI cards (showing Truth comparison ONLY when showTruth === true)
       document.getElementById("kpi-xv").textContent = fmt(xEst[0], 2) + " +- " + fmt(2 * xStd[0], 2);
       document.getElementById("kpi-xv-sub").textContent = appState.showTruth
         ? "True: " + fmt(xTrue[0], 2) + " | Nom: " + fmt(xNom[0], 2)
@@ -294,7 +328,8 @@
         : "At-line A & Luedeking-Piret P";
 
       const fDec = appState.scaleL >= 500 ? 1 : 3;
-      document.getElementById("kpi-vf").textContent = fmt(xEst[6], appState.scaleL >= 500 ? 0 : 2) + " / " + fmt(u[0], fDec);
+      document.getElementById("kpi-vf").textContent =
+        fmt(xEst[6], appState.scaleL >= 500 ? 0 : 2) + " / " + fmt(u[0], fDec);
       document.getElementById("kpi-vf-sub").textContent =
         "k_La=" + fmt(sim.klaHyb[i], 0) + " vs nom " + fmt(sim.klaNom[i], 0) + " 1/h";
 
@@ -310,12 +345,11 @@
       drawAllCharts();
     }
 
-    // High-DPI Multi-Trace Telemetry Canvas Renderer
     function setupHiDpiCanvas(canvas) {
       const rect = canvas.parentElement.getBoundingClientRect();
       const dpr = Math.min(global.devicePixelRatio || 1, 2);
       const w = Math.max(220, rect.width);
-      const h = Math.max(150, rect.height);
+      const h = Math.max(160, rect.height);
       const tw = Math.round(w * dpr);
       const th = Math.round(h * dpr);
       if (canvas.width !== tw || canvas.height !== th) {
@@ -334,18 +368,17 @@
       const { ctx, w, h } = setupHiDpiCanvas(canvas);
       ctx.clearRect(0, 0, w, h);
 
-      const pad = { l: 44, r: 44, t: 10, b: 24 };
+      const pad = { l: 46, r: 46, t: 18, b: 26 };
       const pw = Math.max(40, w - pad.l - pad.r);
       const ph = Math.max(40, h - pad.t - pad.b);
       const N = sim.t.length;
       const tMax = sim.t[N - 1] || 16.0;
 
       const xPx = (k) => pad.l + (sim.t[k] / tMax) * pw;
-      const yPxLeft = (v, minV, maxV) => pad.t + ph * (1.0 - (v - minV) / Math.max(1e-9, maxV - minV));
+      const yPx = (v, minV, maxV) => pad.t + ph * (1.0 - (v - minV) / Math.max(1e-9, maxV - minV));
 
-      // Compute Y bounds for primary (left) and optional secondary (right) axis
       let maxL = spec.minMaxLeft || 1.0;
-      let minL = spec.fixedMinLeft != null ? spec.fixedMinLeft : 0.0;
+      const minL = spec.fixedMinLeft != null ? spec.fixedMinLeft : 0.0;
       let maxR = spec.minMaxRight || 1.0;
       const minR = 0.0;
 
@@ -364,14 +397,23 @@
       maxL *= 1.12;
       maxR *= 1.15;
 
-      // Grid lines & axes ticks
-      ctx.strokeStyle = C.line;
-      ctx.lineWidth = 1;
+      // Axis unit headers
       ctx.font = '10px "IBM Plex Mono", monospace';
       ctx.fillStyle = C.muted;
+      if (spec.leftUnit) {
+        ctx.textAlign = "left";
+        ctx.fillText(spec.leftUnit, pad.l, 11);
+      }
+      if (spec.hasRightAxis && spec.rightUnit) {
+        ctx.textAlign = "right";
+        ctx.fillText(spec.rightUnit, w - pad.r, 11);
+      }
 
+      // Horizontal gridlines and numeric ticks
+      ctx.strokeStyle = C.border;
+      ctx.lineWidth = 1;
       for (let g = 0; g <= 4; g++) {
-        const y = pad.t + (ph * g) / 4;
+        const y = Math.round(pad.t + (ph * g) / 4) + 0.5;
         ctx.beginPath();
         ctx.moveTo(pad.l, y);
         ctx.lineTo(w - pad.r, y);
@@ -379,33 +421,35 @@
 
         const lVal = maxL - ((maxL - minL) * g) / 4;
         ctx.textAlign = "right";
-        ctx.fillText(fmt(lVal, maxL < 5 ? 1 : 0), pad.l - 5, y + 3);
+        ctx.fillStyle = C.muted;
+        ctx.fillText(fmt(lVal, maxL < 2 ? 2 : maxL < 10 ? 1 : 0), pad.l - 5, y + 3);
 
         if (spec.hasRightAxis) {
           const rVal = maxR - ((maxR - minR) * g) / 4;
           ctx.textAlign = "left";
-          ctx.fillText(fmt(rVal, maxR < 3 ? 2 : 0), w - pad.r + 5, y + 3);
+          ctx.fillText(fmt(rVal, maxR < 2 ? 2 : maxR < 10 ? 1 : 0), w - pad.r + 5, y + 3);
         }
       }
 
       // X-axis time ticks (0, 4, 8, 12, 16 h)
       ctx.textAlign = "center";
+      ctx.fillStyle = C.muted;
       for (let hr = 0; hr <= 16; hr += 4) {
         const xp = pad.l + (hr / tMax) * pw;
-        ctx.fillText(hr + "h", xp, h - 7);
+        ctx.fillText(hr + "h", xp, h - 8);
       }
 
-      // Horizontal thresholds
+      // Threshold reference lines
       if (spec.thresholds) {
         for (const th of spec.thresholds) {
           const maxUse = th.axis === "right" ? maxR : maxL;
           const minUse = th.axis === "right" ? minR : minL;
           if (th.val > maxUse || th.val < minUse) continue;
-          const yy = yPxLeft(th.val, minUse, maxUse);
+          const yy = yPx(th.val, minUse, maxUse);
           ctx.save();
           ctx.setLineDash([4, 4]);
           ctx.strokeStyle = th.color || C.alert;
-          ctx.lineWidth = 1;
+          ctx.lineWidth = 1.25;
           ctx.beginPath();
           ctx.moveTo(pad.l, yy);
           ctx.lineTo(w - pad.r, yy);
@@ -413,27 +457,27 @@
           ctx.restore();
           ctx.fillStyle = th.color || C.alert;
           ctx.textAlign = th.axis === "right" ? "right" : "left";
-          ctx.fillText(th.label, th.axis === "right" ? w - pad.r - 4 : pad.l + 4, yy - 3);
+          ctx.fillText(th.label, th.axis === "right" ? w - pad.r - 4 : pad.l + 4, yy - 4);
         }
       }
 
-      // Confidence bands first
+      // Confidence bands (+/- 2 sigma)
       for (const s of spec.series) {
         if (!s.band || s.hidden) continue;
         const maxUse = s.axis === "right" ? maxR : maxL;
         const minUse = s.axis === "right" ? minR : minL;
         ctx.save();
-        ctx.fillStyle = s.bandColor || "rgba(245, 158, 11, 0.16)";
+        ctx.fillStyle = s.bandColor || C.hybBand;
         ctx.beginPath();
         for (let k = 0; k < N; k++) {
           const xp = xPx(k);
-          const yp = yPxLeft(Math.min(maxUse, s.get(k) + s.band(k)), minUse, maxUse);
+          const yp = yPx(Math.min(maxUse, s.get(k) + s.band(k)), minUse, maxUse);
           if (k === 0) ctx.moveTo(xp, yp);
           else ctx.lineTo(xp, yp);
         }
         for (let k = N - 1; k >= 0; k--) {
           const xp = xPx(k);
-          const yp = yPxLeft(Math.max(minUse, s.get(k) - s.band(k)), minUse, maxUse);
+          const yp = yPx(Math.max(minUse, s.get(k) - s.band(k)), minUse, maxUse);
           ctx.lineTo(xp, yp);
         }
         ctx.closePath();
@@ -441,7 +485,7 @@
         ctx.restore();
       }
 
-      // Line traces
+      // Line traces & sparse LIMS diamond markers
       for (const s of spec.series) {
         if (s.hidden) continue;
         const maxUse = s.axis === "right" ? maxR : maxL;
@@ -456,7 +500,7 @@
           const v = s.get(k);
           if (!Number.isFinite(v)) continue;
           const xp = xPx(k);
-          const yp = yPxLeft(clampVal(v, minUse, maxUse), minUse, maxUse);
+          const yp = yPx(clampVal(v, minUse, maxUse), minUse, maxUse);
           if (!started) {
             ctx.moveTo(xp, yp);
             started = true;
@@ -467,7 +511,6 @@
         ctx.stroke();
         ctx.restore();
 
-        // Sparse diamond LIMS markers if specified
         if (s.markers) {
           ctx.save();
           ctx.fillStyle = s.markerColor || C.ink;
@@ -475,7 +518,7 @@
             const mv = s.markers(k);
             if (!Number.isFinite(mv)) continue;
             const xp = xPx(k);
-            const yp = yPxLeft(clampVal(mv, minUse, maxUse), minUse, maxUse);
+            const yp = yPx(clampVal(mv, minUse, maxUse), minUse, maxUse);
             ctx.beginPath();
             ctx.moveTo(xp, yp - 4);
             ctx.lineTo(xp + 4, yp);
@@ -488,7 +531,7 @@
         }
       }
 
-      // Current timeline playhead & hover crosshair
+      // Synchronized playhead / hover crosshair + point markers
       const activeIdx = appState.hoverIdx != null ? appState.hoverIdx : appState.timeIdx;
       const cxp = xPx(activeIdx);
       ctx.save();
@@ -500,10 +543,24 @@
       ctx.lineTo(cxp, pad.t + ph);
       ctx.stroke();
       ctx.restore();
-    }
 
-    function clampVal(v, lo, hi) {
-      return v < lo ? lo : v > hi ? hi : v;
+      for (const s of spec.series) {
+        if (s.hidden || s.dash) continue;
+        const val = s.get(activeIdx);
+        if (!Number.isFinite(val)) continue;
+        const maxUse = s.axis === "right" ? maxR : maxL;
+        const minUse = s.axis === "right" ? minR : minL;
+        const yp = yPx(clampVal(val, minUse, maxUse), minUse, maxUse);
+        ctx.save();
+        ctx.fillStyle = s.color;
+        ctx.strokeStyle = C.bg;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(cxp, yp, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      }
     }
 
     function drawAllCharts() {
@@ -512,37 +569,23 @@
       const C = getThemeColors();
       const idx = appState.hoverIdx != null ? appState.hoverIdx : appState.timeIdx;
 
-      // 1. Biomass (Xv left, Xd right)
       drawTelemetryChart(document.getElementById("chart-biomass"), {
         minMaxLeft: 20,
         minMaxRight: 3,
         hasRightAxis: true,
+        leftUnit: "X_v (g/L)",
+        rightUnit: "X_d (g/L)",
         series: [
-          {
-            get: (k) => sim.estNom[k][0],
-            color: C.nom,
-            width: 1.6,
-            dash: [5, 4],
-          },
-          {
-            get: (k) => sim.trueStates[k][0],
-            color: C.gt,
-            width: 2.0,
-            hidden: !appState.showTruth,
-          },
+          { get: (k) => sim.estNom[k][0], color: C.nom, width: 1.6, dash: [5, 4] },
+          { get: (k) => sim.trueStates[k][0], color: C.gt, width: 2.0, hidden: !appState.showTruth },
           {
             get: (k) => sim.estHyb[k][0],
             band: (k) => 2.0 * sim.stdHyb[k][0],
-            bandColor: "rgba(245, 158, 11, 0.16)",
+            bandColor: C.hybBand,
             color: C.hyb,
             width: 2.2,
           },
-          {
-            axis: "right",
-            get: (k) => sim.estHyb[k][1],
-            color: C.alert,
-            width: 1.7,
-          },
+          { axis: "right", get: (k) => sim.estHyb[k][1], color: C.alert, width: 1.7 },
           {
             axis: "right",
             get: (k) => sim.trueStates[k][1],
@@ -554,58 +597,40 @@
         ],
       });
       document.getElementById("readout-chart-1").textContent =
-        "t=" + fmt(sim.t[idx], 1) + "h | Xv=" + fmt(sim.estHyb[idx][0], 2) + " | Xd=" + fmt(sim.estHyb[idx][1], 2);
+        "t=" + fmt(sim.t[idx], 1) + "h | Xv=" + fmt(sim.estHyb[idx][0], 2) + " g/L | Xd=" + fmt(sim.estHyb[idx][1], 2) + " g/L";
 
-      // 2. Dissolved Oxygen CL (left) & k_La (right)
       drawTelemetryChart(document.getElementById("chart-do"), {
         minMaxLeft: 9.0,
         minMaxRight: 700,
         hasRightAxis: true,
+        leftUnit: "C_L (mg/L)",
+        rightUnit: "k_La (1/h)",
         thresholds: [{ val: 1.64, label: "DO 20%", color: C.alert }],
         series: [
-          {
-            get: (k) => sim.estNom[k][3],
-            color: C.nom,
-            width: 1.5,
-            dash: [5, 4],
-          },
-          {
-            get: (k) => sim.trueStates[k][3],
-            color: C.gt,
-            width: 2.0,
-            hidden: !appState.showTruth,
-          },
+          { get: (k) => sim.estNom[k][3], color: C.nom, width: 1.5, dash: [5, 4] },
+          { get: (k) => sim.trueStates[k][3], color: C.gt, width: 2.0, hidden: !appState.showTruth },
           {
             get: (k) => sim.estHyb[k][3],
             band: (k) => 2.0 * sim.stdHyb[k][3],
-            bandColor: "rgba(245, 158, 11, 0.14)",
+            bandColor: C.hybBand,
             color: C.hyb,
             width: 2.1,
           },
-          {
-            axis: "right",
-            get: (k) => sim.klaHyb[k],
-            color: "#6bd6ae",
-            width: 1.5,
-          },
+          { axis: "right", get: (k) => sim.klaHyb[k], color: C.gt, width: 1.5 },
         ],
       });
       document.getElementById("readout-chart-2").textContent =
-        "CL=" + fmt(sim.estHyb[idx][3], 2) + " mg/L | kLa=" + fmt(sim.klaHyb[idx], 0) + " 1/h";
+        "t=" + fmt(sim.t[idx], 1) + "h | CL=" + fmt(sim.estHyb[idx][3], 2) + " mg/L | kLa=" + fmt(sim.klaHyb[idx], 0) + " 1/h";
 
-      // 3. Metabolites: S (right, with S_crit), A & P (left)
       drawTelemetryChart(document.getElementById("chart-metabolites"), {
         minMaxLeft: 12.0,
         minMaxRight: 1.5,
         hasRightAxis: true,
+        leftUnit: "A, P (g/L)",
+        rightUnit: "S (g/L)",
         thresholds: [{ val: 0.35, axis: "right", label: "S_crit 0.35", color: C.alert }],
         series: [
-          {
-            get: (k) => sim.estNom[k][4],
-            color: C.nom,
-            width: 1.5,
-            dash: [5, 4],
-          },
+          { get: (k) => sim.estNom[k][4], color: C.nom, width: 1.5, dash: [5, 4] },
           {
             get: (k) => sim.estHyb[k][4],
             color: C.alert,
@@ -613,77 +638,49 @@
             markers: (k) => (sim.obsAtline[k] ? sim.measStates[k][4] : NaN),
             markerColor: C.alert,
           },
-          {
-            get: (k) => sim.estHyb[k][5],
-            color: C.hyb,
-            width: 2.0,
-          },
-          {
-            get: (k) => sim.trueStates[k][5],
-            color: C.gt,
-            width: 1.6,
-            hidden: !appState.showTruth,
-          },
+          { get: (k) => sim.estHyb[k][5], color: C.hyb, width: 2.0 },
+          { get: (k) => sim.trueStates[k][5], color: C.gt, width: 1.6, hidden: !appState.showTruth },
           {
             axis: "right",
             get: (k) => sim.estHyb[k][2],
-            color: C.mint || "#6bd6ae",
-            width: 1.8,
+            color: C.gtInk,
+            width: 1.7,
             markers: (k) => (sim.obsAtline[k] ? sim.measStates[k][2] : NaN),
             markerColor: C.ink,
           },
         ],
       });
       document.getElementById("readout-chart-3").textContent =
-        "S=" + fmt(sim.estHyb[idx][2], 3) + " | A=" + fmt(sim.estHyb[idx][4], 2) + " | P=" + fmt(sim.estHyb[idx][5], 2);
+        "t=" + fmt(sim.t[idx], 1) + "h | S=" + fmt(sim.estHyb[idx][2], 3) + " | A=" + fmt(sim.estHyb[idx][4], 2) + " | P=" + fmt(sim.estHyb[idx][5], 2) + " g/L";
 
-      // 4. Growth rate mu (left), Mahalanobis D_M (right), & DoV p99 threshold
       drawTelemetryChart(document.getElementById("chart-control-dov"), {
         minMaxLeft: 0.48,
         minMaxRight: 4.2,
         hasRightAxis: true,
+        leftUnit: "mu (1/h)",
+        rightUnit: "D_M",
         thresholds: [
-          { val: appState.muTarget, label: "mu_set", color: C.hyb },
+          { val: appState.muTarget, label: "mu_set", color: C.hybInk },
           { val: sim.p99Global, axis: "right", label: "DoV p99", color: C.alert },
         ],
         series: [
-          {
-            get: (k) => sim.muNom[k],
-            color: C.nom,
-            width: 1.4,
-            dash: [5, 4],
-          },
-          {
-            get: (k) => sim.muTrue[k],
-            color: C.gt,
-            width: 1.8,
-            hidden: !appState.showTruth,
-          },
-          {
-            get: (k) => sim.muHyb[k],
-            color: C.hyb,
-            width: 2.1,
-          },
-          {
-            axis: "right",
-            get: (k) => sim.d_m[k],
-            color: C.alert,
-            width: 1.7,
-          },
+          { get: (k) => sim.muNom[k], color: C.nom, width: 1.4, dash: [5, 4] },
+          { get: (k) => sim.muTrue[k], color: C.gt, width: 1.8, hidden: !appState.showTruth },
+          { get: (k) => sim.muHyb[k], color: C.hyb, width: 2.1 },
+          { axis: "right", get: (k) => sim.d_m[k], color: C.alert, width: 1.7 },
         ],
       });
       document.getElementById("readout-chart-4").textContent =
-        "mu=" + fmt(sim.muHyb[idx], 3) + " 1/h | D_M=" + fmt(sim.d_m[idx], 2);
+        "t=" + fmt(sim.t[idx], 1) + "h | mu=" + fmt(sim.muHyb[idx], 3) + " 1/h | D_M=" + fmt(sim.d_m[idx], 2);
     }
 
-    // Bind Hover Crosshairs on all 4 telemetry canvases
     for (const cid of ["chart-biomass", "chart-do", "chart-metabolites", "chart-control-dov"]) {
       const cv = document.getElementById(cid);
       if (!cv) continue;
       cv.addEventListener("pointermove", function (e) {
         if (!appState.sim) return;
         const rect = cv.getBoundingClientRect();
-        const frac = clampVal((e.clientX - rect.left - 44) / Math.max(40, rect.width - 88), 0, 1);
+        const frac = clampVal((e.clientX - rect.left - 46) / Math.max(40, rect.width - 92), 0, 1);
         appState.hoverIdx = Math.round(frac * (appState.sim.t.length - 1));
         drawAllCharts();
       });
@@ -693,7 +690,6 @@
       });
     }
 
-    // Timeline playback loop
     let playTimer = null;
     function setPlaying(shouldPlay) {
       appState.playing = shouldPlay;
@@ -714,7 +710,6 @@
       }
     }
 
-    // Interactive Control Event Handlers
     elThemeBtn.addEventListener("click", function () {
       applyTheme(appState.theme === "dark" ? "light" : "dark");
     });
@@ -832,7 +827,6 @@
       runAndRenderSimulation();
     });
 
-    // Hydrate Case Study Narrative Sections directly from exported verified bundle
     function hydrateCaseStudy() {
       const s1 = bundle.stage1_recovery;
       const g86 = bundle.gam86;
@@ -851,27 +845,27 @@
       const hybRatio = ctrlBench.hybrid_norm_rmse / Math.max(1e-9, ctrlBench.nominal_norm_rmse);
       document.getElementById("hero-ekf-ratio").textContent = fmt(hybRatio, 3) + "x";
 
-      // Audit progression timeline cards
-      const timelineHost = document.getElementById("audit-timeline-cards");
-      timelineHost.innerHTML = bundle.audit_progression
-        .map((item) => {
-          const isGo = item.verdict.indexOf("GO") === 0;
-          const badgeCls = isGo ? "pill-pass" : "pill-fail";
-          return (
-            '<div class="audit-stage ' + (isGo ? "go" : "") + '">' +
-            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">' +
-            "<strong>" + escapeHtml(item.iteration) + "</strong>" +
-            '<span class="' + badgeCls + '">' + fmt(item.score, 1) + "/10 " + escapeHtml(item.verdict.split(" ")[0]) + "</span>" +
-            "</div>" +
-            '<div class="mono" style="font-size:11.5px;color:var(--muted);margin-bottom:6px;">P0: ' +
-            item.p0_count + " | P1: " + item.p1_count + "</div>" +
-            '<p style="margin:0;font-size:12.5px;color:var(--muted);">' + escapeHtml(item.summary) + "</p>" +
-            "</div>"
-          );
-        })
-        .join("");
+      // Audit progression table rows
+      const auditBody = document.getElementById("audit-progression-tbody");
+      if (auditBody) {
+        auditBody.innerHTML = bundle.audit_progression
+          .map((item) => {
+            const isGo = item.verdict.indexOf("GO") === 0;
+            const markCls = isGo ? "mark-pass" : "mark-fail";
+            return (
+              "<tr>" +
+              "<td><strong>" + escapeHtml(item.iteration) + "</strong></td>" +
+              '<td class="num">' + fmt(item.score, 1) + "/10</td>" +
+              '<td><span class="' + markCls + '">' + escapeHtml(item.verdict) + "</span></td>" +
+              '<td class="num">' + item.p0_count + "</td>" +
+              '<td class="num">' + item.p1_count + "</td>" +
+              "<td>" + escapeHtml(item.summary) + "</td>" +
+              "</tr>"
+            );
+          })
+          .join("");
+      }
 
-      // Tab 3: Stage-1 6-parameter recovery table
       document.getElementById("stage1-cond-summary").textContent =
         "kappa_rel = " + fmt(s1.condition_number_rel, 2) + " (< 45.0), max_err = " + fmt(s1.max_relative_error_pct, 2) + "% (< 8.0%)";
       const s1Body = document.querySelector("#stage1-params-table tbody");
@@ -886,7 +880,7 @@
             '<td class="num">' + fmt(s1.true_values[pname], dec) + "</td>" +
             '<td class="num">' + fmt(s1.recovered_values[pname], dec) + "</td>" +
             '<td class="num">' + fmt(s1.standard_errors[pname], dec) + "</td>" +
-            '<td class="num"><span class="pill-pass">' + fmt(err, 2) + "%</span></td>" +
+            '<td class="num"><span class="mark-pass">' + fmt(err, 2) + "%</span></td>" +
             "</tr>"
           );
         })
@@ -904,7 +898,6 @@
         s1.calibration_sha256.slice(0, 16) +
         "...";
 
-      // Tab 4: 5 L vs 1000 L Scale Table
       const scBody = document.querySelector("#scale-comparison-table tbody");
       const s1000 = scaleBench.summary;
       const scRows = [
@@ -924,7 +917,6 @@
         )
         .join("");
 
-      // Tab 5: Held-out 5-regime R2 & 6-disturbance EKF ratio tables
       const hoBody = document.querySelector("#heldout-regimes-table tbody");
       hoBody.innerHTML = g86.heldout_per_batch
         .map(
@@ -949,7 +941,7 @@
             '<td class="mono">' + escapeHtml(d.mode) + "</td>" +
             '<td class="num">' + fmt(d.hybrid_norm_rmse, 4) + "</td>" +
             '<td class="num">' + fmt(d.nominal_norm_rmse, 4) + "</td>" +
-            '<td class="num"><span class="pill-pass">' + fmt(d.rmse_ratio, 3) + "x (-" + fmt(d.error_reduction_pct, 1) + "%)</span></td>" +
+            '<td class="num"><span class="mark-pass">' + fmt(d.rmse_ratio, 3) + "x (-" + fmt(d.error_reduction_pct, 1) + "%)</span></td>" +
             '<td class="num">' + fmt(d.peak_acetate_g_L, 3) + "</td>" +
             '<td class="num">' + fmt(d.min_DO_pct, 1) + "%</td>" +
             '<td class="num">' + fmt(d.max_d_m, 2) + "</td>" +
@@ -957,13 +949,12 @@
         )
         .join("");
 
-      // Tab 6: Architecture AIC/BIC table + Live Browser OOD/84 g/L check
       const aicBody = document.querySelector("#arch-aic-table tbody");
       aicBody.innerHTML = g86.arch_aic_bic
         .map((r) => {
           const badge = r.selected
-            ? '<span class="pill-pass">Selected (GAM-86)</span>'
-            : '<span class="mono" style="color:var(--muted);">Candidate</span>';
+            ? '<span class="mark-pass">Selected (GAM-86)</span>'
+            : '<span class="mono">Candidate</span>';
           return (
             "<tr>" +
             '<td class="mono">' + escapeHtml(r.cadence) + "</td>" +
@@ -983,7 +974,7 @@
       const p84 = engine.predictGamWithUQ(80.0, 4.0, 0.3, 4.5, 0.2, hydRef.v_tip, muM, bundle);
       const trueEta84 = g86.reference_84gL_true_eta_kla;
       const z84 = Math.abs(p84.eta_kla - trueEta84) / Math.max(1e-9, p84.std_kla);
-      const pOod = engine.predictGamWithUQ(10.0, 0.3, 15.0, 4.0, 8.0, hydRef.v_tip, 0.30, bundle);
+      const pOod = engine.predictGamWithUQ(10.0, 0.3, 15.0, 4.0, 8.0, hydRef.v_tip, 0.3, bundle);
       document.getElementById("ood-calibration-summary").textContent =
         "Live JS Parity Verification: At X_tot=84 g/L, eta_kla=" +
         fmt(p84.eta_kla, 4) +
@@ -999,14 +990,13 @@
         fmt(pOod.eta_mu, 4) +
         " (mechanistic prior 1.0000).";
 
-      // Section 5: Pytest Verification Table & ALCOA+ Chain
       const pyBody = document.querySelector("#pytest-matrix-table tbody");
       pyBody.innerHTML = bundle.pytest_suite
         .map(
           (t) =>
             "<tr>" +
-            '<td class="mono" style="font-size:11.5px;">' + escapeHtml(t.name) + "</td>" +
-            '<td><span class="pill-pass">' + escapeHtml(t.status) + "</span></td>" +
+            '<td class="mono" style="font-size:12px;">' + escapeHtml(t.name) + "</td>" +
+            '<td><span class="mark-pass">' + escapeHtml(t.status) + "</span></td>" +
             "<td>" + escapeHtml(t.focus) + "</td>" +
             "</tr>"
         )
@@ -1035,22 +1025,39 @@
         .join("");
     }
 
-    // Tab switching for Section 4 Challenges
-    document.querySelectorAll(".tab-btn").forEach((btn) => {
-      btn.addEventListener("click", function () {
-        const target = this.getAttribute("data-tab");
-        document.querySelectorAll(".tab-btn").forEach((b) => {
-          const active = b.getAttribute("data-tab") === target;
-          b.classList.toggle("active", active);
-          b.setAttribute("aria-selected", active ? "true" : "false");
-        });
-        document.querySelectorAll(".tab-panel").forEach((p) => {
-          p.classList.toggle("active", p.id === "tab-" + target);
-        });
+    // ARIA tabs with keyboard arrow support (A11Y-PATTERNS.md)
+    const tabBtns = Array.from(document.querySelectorAll(".tab-btn"));
+    function activateTab(btn) {
+      const target = btn.getAttribute("data-tab");
+      tabBtns.forEach((b) => {
+        const active = b.getAttribute("data-tab") === target;
+        b.classList.toggle("active", active);
+        b.setAttribute("aria-selected", active ? "true" : "false");
+        b.setAttribute("tabindex", active ? "0" : "-1");
+      });
+      document.querySelectorAll(".tab-panel").forEach((p) => {
+        const show = p.id === "tab-" + target;
+        p.classList.toggle("active", show);
+        p.hidden = !show;
+      });
+    }
+
+    tabBtns.forEach((btn, idx) => {
+      btn.addEventListener("click", () => activateTab(btn));
+      btn.addEventListener("keydown", function (e) {
+        let nextIdx = null;
+        if (e.key === "ArrowRight") nextIdx = (idx + 1) % tabBtns.length;
+        else if (e.key === "ArrowLeft") nextIdx = (idx - 1 + tabBtns.length) % tabBtns.length;
+        else if (e.key === "Home") nextIdx = 0;
+        else if (e.key === "End") nextIdx = tabBtns.length - 1;
+        if (nextIdx != null) {
+          e.preventDefault();
+          activateTab(tabBtns[nextIdx]);
+          tabBtns[nextIdx].focus();
+        }
       });
     });
 
-    // Export Downloads
     function triggerDownload(filename, content, mimeType) {
       const blob = new Blob([content], { type: mimeType });
       const url = URL.createObjectURL(blob);
@@ -1114,7 +1121,6 @@
       }
     }
 
-    // Boot everything
     hydrateCaseStudy();
     syncControlUI();
     runAndRenderSimulation();

@@ -1,12 +1,12 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>hybrid-fedbatch-twin | Interactive 3D Bioreactor Digital Twin &amp; Engineering Case Study</title>
+  <title>hybrid-fedbatch-twin | Serial Mechanistic-ML Bioreactor Digital Twin</title>
   <meta
     name="description"
-    content="Zero-backend client-side hybrid mechanistic-ML fed-batch bioreactor digital twin with live Three.js 3D reactor, GAM-86 (B=15) bootstrap ensemble, Padé EKF state estimation, and adversarial engineering audit case study."
+    content="Zero-backend client-side E. coli BL21 fed-batch bioreactor digital twin with 3D vessel assembly, GAM-86 (B=15) bootstrap ensemble, and Padé matrix-exponential EKF."
   />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -17,96 +17,109 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <header class="topbar">
-    <div class="topbar-inner">
-      <a class="brand" href="#live-twin">
-        <span class="brand-mark">DT</span>
-        <span>hybrid-fedbatch-twin</span>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+
+  <header class="masthead">
+    <div class="masthead-inner">
+      <a class="brand-lockup" href="#console-workspace">
+        <span class="brand-name">hybrid-fedbatch-twin</span>
+        <span class="brand-sub">E. coli BL21 Fed-Batch State Estimator</span>
       </a>
 
-      <nav class="nav-links" aria-label="Primary sections">
-        <a href="#live-twin">3D Twin Console</a>
-        <a href="#industrial-context">Industrial Context</a>
-        <a href="#adversarial-methodology">Multi-Agent Audit</a>
-        <a href="#audit-progression">Challenges (Iter 0 -&gt; 2)</a>
-        <a href="#verification-scorecard">Verification &amp; ALCOA+</a>
-      </nav>
-
-      <div class="topbar-actions">
-        <span class="status-pill" id="header-audit-pill">
-          <span class="status-dot" aria-hidden="true"></span>
-          <span>AUDIT 9.2/10 GO</span>
-        </span>
-        <button type="button" class="btn" id="theme-toggle-btn" aria-label="Toggle Light and Dark Theme">
-          Theme: Dark
-        </button>
+      <nav class="primary-nav" id="primary-nav" aria-label="Primary sections">
+        <a href="#console-workspace">Twin Console</a>
+        <a href="#greybox-formulation">Grey-Box Physics</a>
+        <a href="#remediation-dossier">Remediation Dossier</a>
+        <a href="#alcoa-provenance">Verification &amp; ALCOA+</a>
         <a
-          class="btn"
+          class="mobile-nav-github"
           href="https://github.com/premlalpritish-wq/hybrid-fedbatch-twin"
           target="_blank"
           rel="noopener noreferrer"
         >
-          GitHub Repo
+          GitHub Source
+        </a>
+      </nav>
+
+      <div class="masthead-actions">
+        <button
+          type="button"
+          class="btn nav-toggle-btn"
+          id="mobile-nav-toggle"
+          aria-expanded="false"
+          aria-controls="primary-nav"
+        >
+          Menu
+        </button>
+        <button type="button" class="btn" id="theme-toggle-btn" aria-label="Switch color theme">
+          Theme: Light
+        </button>
+        <a
+          class="btn masthead-github-btn"
+          href="https://github.com/premlalpritish-wq/hybrid-fedbatch-twin"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          GitHub Source
         </a>
       </div>
     </div>
   </header>
 
-  <main class="page-wrap">
-    <!-- Hero Banner -->
-    <section class="hero" aria-label="Case study overview">
-      <div class="hero-eyebrow">
-        <span class="tag-badge go">PORTELA LEVEL 3+ VALIDATED BLUEPRINT</span>
-        <span class="tag-badge accent">R-108742 UPSTREAM BIOPROCESS BENCHMARK INSPIRED</span>
-        <span class="tag-badge mono" id="hero-bundle-tag">LOADING GAM-86 BUNDLE...</span>
+  <main class="page-shell" id="main-content" tabindex="-1">
+    <section class="pub-header" aria-label="System overview">
+      <div class="pub-meta-line">
+        <span>Portela Level 3+ Hybrid Architecture</span>
+        <span>R-108742 Upstream Bioprocess Benchmark</span>
+        <span class="mono" id="hero-bundle-tag">Loading GAM-86 bundle...</span>
       </div>
-      <h1>Hybrid Mechanistic-ML Bioreactor Digital Twin &amp; Adversarial Audit Case Study</h1>
-      <p class="hero-lead">
-        A zero-backend, client-side E. coli BL21 fed-batch fermentation digital twin pairing a serial
-        Monod / Luedeking-Piret conservation shell with a 15-member bootstrap GAM-86 Neural ODE, subspace
-        Mahalanobis Domain-of-Validity gating, Padé matrix-exponential Continuous-Discrete EKF, and 5 L to
-        1000 L geometric scale invariance. Built and hardened through a closed-loop adversarial remediation
-        from 2.6/10 (NO-GO) to 9.2/10 (GO) with 8/8 passing verification tests.
+      <h1>Serial Mechanistic-ML Bioreactor Digital Twin and Continuous-Discrete EKF Console</h1>
+      <p class="pub-abstract">
+        A client-side E. coli BL21 fed-batch fermentation digital twin pairing Monod and Luedeking-Piret mass
+        balances with a 15-member bootstrap GAM-86 Neural ODE, subspace Mahalanobis Domain-of-Validity gating,
+        Padé matrix-exponential EKF state estimation, and 5 L to 1000 L geometric scale invariance. Hardened
+        through closed-loop adversarial remediation from 2.6/10 (NO-GO) to 9.2/10 (GO) with 8/8 passing pytest
+        verification gates.
       </p>
 
-      <div class="hero-metrics" id="hero-metrics-strip">
-        <div class="metric-chip">
-          <div class="m-label">Composite Audit Score</div>
-          <div class="m-val">9.2 / 10 (GO)</div>
-          <div class="m-sub">Up from 2.6/10 (0 P0, 0 P1)</div>
+      <dl class="spec-ledger" id="hero-metrics-strip">
+        <div class="spec-item">
+          <dt>Audit Verdict</dt>
+          <dd>9.2 / 10 (GO)</dd>
+          <div class="spec-sub">Up from 2.6/10 (0 P0, 0 P1)</div>
         </div>
-        <div class="metric-chip">
-          <div class="m-label">Stage-1 6-Param ID</div>
-          <div class="m-val" id="hero-stage1-err">--</div>
-          <div class="m-sub" id="hero-stage1-kappa">--</div>
+        <div class="spec-item">
+          <dt>Stage-1 6-Param ID</dt>
+          <dd id="hero-stage1-err">--</dd>
+          <div class="spec-sub" id="hero-stage1-kappa">--</div>
         </div>
-        <div class="metric-chip">
-          <div class="m-label">Held-Out 5-Regime R2</div>
-          <div class="m-val" id="hero-gam-r2">--</div>
-          <div class="m-sub">86 params, B=15 bootstraps</div>
+        <div class="spec-item">
+          <dt>Held-Out 5-Regime R2</dt>
+          <dd id="hero-gam-r2">--</dd>
+          <div class="spec-sub">86 params, B=15 bootstraps</div>
         </div>
-        <div class="metric-chip">
-          <div class="m-label">EKF Error Reduction</div>
-          <div class="m-val" id="hero-ekf-ratio">--</div>
-          <div class="m-sub">Sensor-parity Hyb vs Nom nRMSE</div>
+        <div class="spec-item">
+          <dt>EKF Error Reduction</dt>
+          <dd id="hero-ekf-ratio">--</dd>
+          <div class="spec-sub">Sensor-parity Hyb vs Nom nRMSE</div>
         </div>
-        <div class="metric-chip">
-          <div class="m-label">Pytest Verification</div>
-          <div class="m-val">8 / 8 PASSED</div>
-          <div class="m-sub">Invariants, VJP, UQ, 1000 L, ALCOA+</div>
+        <div class="spec-item">
+          <dt>Pytest Verification</dt>
+          <dd>8 / 8 PASSED</dd>
+          <div class="spec-sub">Invariants, VJP, UQ, 1000 L, ALCOA+</div>
         </div>
-      </div>
+      </dl>
     </section>
 
-    <!-- Section 1: Live 3D Bioreactor Digital Twin & Telemetry Console -->
-    <section id="live-twin" class="case-section">
-      <div class="section-head">
+    <!-- Section 1: 40% Apparatus Workbench / 60% Synchronized Telemetry -->
+    <section id="console-workspace" class="doc-section">
+      <div class="section-header">
         <div>
-          <div class="section-kicker">Section 01 : Client-Side Physics &amp; State Estimation</div>
-          <h2>Interactive 3D Stirred-Tank Bioreactor &amp; Live EKF Console</h2>
-          <p class="section-desc">
-            Every slider recomputes the complete 16-hour fed-batch Exponential-Rosenbrock simulation,
-            15-member GAM-86 uncertainty inference, and Continuous-Discrete EKF directly in your browser.
+          <div class="section-num">01 / Client-Side Physics &amp; State Estimation</div>
+          <h2>Bioreactor Apparatus Twin and Live EKF Workbench</h2>
+          <p class="section-lead">
+            Adjusting any actuator recomputes the 16-hour fed-batch Exponential-Rosenbrock trajectory, 15-member
+            GAM-86 uncertainty inference, and Continuous-Discrete EKF directly in the browser.
           </p>
         </div>
         <div class="seg-group" role="group" aria-label="Bioreactor Scale Mode">
@@ -119,454 +132,437 @@
         </div>
       </div>
 
-      <div class="state-banner" id="sim-status-banner" role="status" aria-live="polite">
-        <span id="sim-status-text">Initializing GAM-86 (B=15) &amp; Padé EKF engine...</span>
-        <span class="mono" id="sim-timing-badge">0 ms eval</span>
-      </div>
-
-      <div class="twin-console">
-        <!-- Left Column: 3D Viewport + Control Sliders -->
+      <div class="workbench-grid">
+        <!-- Left 40%: Framed Apparatus Figure + Controls -->
         <div class="panel">
-          <div class="panel-head">
-            <h3 class="panel-title">3D Bioreactor Vessel &amp; Actuators</h3>
-            <span class="mono" id="vessel-mode-label">5 L Glass Benchtop</span>
+          <div class="figure-plate">
+            <div class="figure-bar figure-bar-top">
+              <span class="figure-id">Fig. 1: Stirred-Tank Bioreactor Assembly</span>
+              <span class="figure-subtitle" id="vessel-mode-label">5 L Borosilicate Benchtop</span>
+            </div>
+
+            <div class="reactor-canvas-stage" id="reactor-3d-host"></div>
+
+            <div class="figure-bar figure-bar-bottom">
+              <div class="figure-hint-row">
+                <span>Drag to orbit vessel, scroll to zoom</span>
+                <span class="figure-dov-status" id="hud-dov">DoV IN-DOMAIN (D_M = 0.00)</span>
+              </div>
+              <div class="figure-telemetry-row">
+                <span id="hud-time">t = 0.0 h</span>
+                <span id="hud-pgv">Pg/V: -- W/m3</span>
+                <span id="hud-vtip">v_tip: -- m/s</span>
+                <span id="hud-kla">k_La: -- 1/h</span>
+              </div>
+            </div>
           </div>
 
-          <div class="reactor-viewport-wrap" id="reactor-3d-host">
-            <div class="reactor-hud-top">
-              <span class="hud-pill" id="hud-time">t = 0.0 h / 16.0 h</span>
-              <span class="hud-pill ok" id="hud-dov">DoV IN-DOMAIN (D_M = 0.00)</span>
-            </div>
-            <div class="reactor-hud-bottom">
-              <span class="hud-pill" id="hud-pgv">Pg/V: -- W/m3</span>
-              <span class="hud-pill" id="hud-vtip">v_tip: -- m/s</span>
-              <span class="hud-pill" id="hud-kla">k_L a: -- 1/h</span>
-            </div>
-          </div>
-
-          <div class="viewport-toolbar">
+          <div class="viewport-actions">
             <button type="button" class="btn" id="toggle-motion-btn">Pause 3D Motion</button>
-            <button type="button" class="btn" id="reset-camera-btn">Reset Camera</button>
+            <button type="button" class="btn" id="reset-camera-btn">Reset View</button>
             <button type="button" class="btn" id="reset-defaults-btn">Reset Sliders</button>
           </div>
 
-          <!-- Feed Control Mode & Sliders -->
-          <div class="control-group">
-            <div class="slider-label-line" style="margin-bottom: 6px;">
-              <label for="ctrl-mode-select">Feed Control Strategy</label>
-              <span class="mono" id="ctrl-mode-tag">Closed-Loop mu-Stat</span>
+          <div class="actuator-group">
+            <div class="control-row">
+              <div class="control-label-row">
+                <label for="ctrl-mode-select">Feed Control Strategy</label>
+                <span class="mono" id="ctrl-mode-tag">Closed-Loop mu-Stat</span>
+              </div>
+              <select id="ctrl-mode-select" class="ctrl-select">
+                <option value="closed_loop">Closed-Loop mu-Stat Controller (DO &amp; Acetate Guarded)</option>
+                <option value="manual">Manual Constant Feed Override (Open-Loop Slider)</option>
+              </select>
             </div>
-            <select id="ctrl-mode-select" class="ctrl-select" aria-label="Feed Control Strategy">
-              <option value="closed_loop">Closed-Loop mu-Stat Controller (DO &amp; Acetate Guarded)</option>
-              <option value="manual">Manual Constant Feed Override (Open-Loop Slider)</option>
-            </select>
           </div>
 
-          <div class="control-group">
-            <div class="slider-row" id="row-mu-target">
-              <div class="slider-label-line">
+          <div class="actuator-group">
+            <div class="control-row" id="row-mu-target">
+              <div class="control-label-row">
                 <label for="slider-mu-target">Target Specific Growth Rate (mu_set)</label>
-                <span class="slider-val" id="val-mu-target">0.28 1/h</span>
+                <span class="control-val" id="val-mu-target">0.28 1/h</span>
               </div>
-              <input id="slider-mu-target" type="range" min="0.12" max="0.36" step="0.01" value="0.28" />
+              <div class="range-wrap">
+                <input id="slider-mu-target" type="range" min="0.12" max="0.36" step="0.01" value="0.28" />
+              </div>
             </div>
 
-            <div class="slider-row" id="row-manual-feed" style="display: none;">
-              <div class="slider-label-line">
+            <div class="control-row" id="row-manual-feed" style="display: none;">
+              <div class="control-label-row">
                 <label for="slider-manual-feed">Manual Substrate Feed Rate (F)</label>
-                <span class="slider-val" id="val-manual-feed">0.080 L/h</span>
+                <span class="control-val" id="val-manual-feed">0.080 L/h</span>
               </div>
-              <input id="slider-manual-feed" type="range" min="0.01" max="0.28" step="0.005" value="0.08" />
+              <div class="range-wrap">
+                <input id="slider-manual-feed" type="range" min="0.01" max="0.28" step="0.005" value="0.08" />
+              </div>
             </div>
 
-            <div class="slider-row">
-              <div class="slider-label-line">
+            <div class="control-row">
+              <div class="control-label-row">
                 <label for="slider-rpm">Impeller Agitation (RPM)</label>
-                <span class="slider-val" id="val-rpm">450 RPM</span>
+                <span class="control-val" id="val-rpm">450 RPM</span>
               </div>
-              <input id="slider-rpm" type="range" min="200" max="900" step="10" value="450" />
+              <div class="range-wrap">
+                <input id="slider-rpm" type="range" min="200" max="900" step="10" value="450" />
+              </div>
             </div>
 
-            <div class="slider-row">
-              <div class="slider-label-line">
+            <div class="control-row">
+              <div class="control-label-row">
                 <label for="slider-vvm">Aeration Rate (vvm)</label>
-                <span class="slider-val" id="val-vvm">1.20 vvm</span>
+                <span class="control-val" id="val-vvm">1.20 vvm</span>
               </div>
-              <input id="slider-vvm" type="range" min="0.30" max="2.50" step="0.05" value="1.20" />
+              <div class="range-wrap">
+                <input id="slider-vvm" type="range" min="0.30" max="2.50" step="0.05" value="1.20" />
+              </div>
             </div>
 
-            <div class="slider-row" style="margin-bottom: 4px;">
-              <div class="slider-label-line">
-                <label for="select-disturbance">Inject Plant Disturbance</label>
-                <span class="mono" style="font-size: 11px; color: var(--muted);">Plant-Only Fault</span>
+            <div class="control-row">
+              <div class="control-label-row">
+                <label for="select-disturbance">Inject Plant Disturbance (Plant-Only Fault)</label>
               </div>
               <select id="select-disturbance" class="ctrl-select">
                 <option value="none">None (Nominal Run)</option>
-                <option value="aeration_drop">Aeration Drop (-55% vvm, t = 6.0-9.5 h)</option>
-                <option value="stirrer_drop">Stirrer Fault (-45% RPM, t = 7.0-10.5 h)</option>
-                <option value="shear_spike">High-Shear Spike (+260 RPM eq, t = 8.0-12.0 h)</option>
+                <option value="aeration_drop">Aeration Drop (-55% vvm, t = 6.0 to 9.5 h)</option>
+                <option value="stirrer_drop">Stirrer Fault (-45% RPM, t = 7.0 to 10.5 h)</option>
+                <option value="shear_spike">High-Shear Spike (+260 RPM eq, t = 8.0 to 12.0 h)</option>
                 <option value="feed_step">Unmeasured Feed Dilution (-30% S_feed, t &gt;= 7.0 h)</option>
                 <option value="combo">Combined Aeration + Feed Fault</option>
               </select>
             </div>
           </div>
 
-          <!-- Batch Timeline Scrubber & Operator Parity Gate -->
-          <div class="control-group">
-            <div class="slider-row">
-              <div class="slider-label-line">
-                <label for="slider-time">Batch Timeline Cursor (0 -&gt; 16 h)</label>
-                <span class="slider-val" id="val-time">16.0 h</span>
+          <div class="actuator-group">
+            <div class="control-row">
+              <div class="control-label-row">
+                <label for="slider-time">Batch Timeline Cursor (0.0 to 16.0 h)</label>
+                <span class="control-val" id="val-time">16.0 h</span>
               </div>
-              <input id="slider-time" type="range" min="0" max="160" step="1" value="160" />
+              <div class="range-wrap">
+                <input id="slider-time" type="range" min="0" max="160" step="1" value="160" />
+              </div>
             </div>
-            <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+
+            <div class="batch-btn-row">
               <button type="button" class="btn btn-primary" id="play-batch-btn">Play 16 h Batch</button>
               <button type="button" class="btn" id="jump-end-btn">Jump to 16.0 h</button>
             </div>
 
-            <label class="checkbox-row" for="toggle-show-truth">
+            <label class="checkbox-label" for="toggle-show-truth">
               <input type="checkbox" id="toggle-show-truth" />
               <span>Reveal Ground-Truth Plant Overlay (Validation Oracle)</span>
             </label>
-            <div style="font-size: 11.5px; color: var(--muted); margin-top: 4px;" id="operator-parity-note">
+            <p class="parity-caption" id="operator-parity-note">
               5 L Operator Mode hides plant truth by default (D9 parity): displaying EKF state +/- 2 sigma,
               online PAT, and sparse at-line LIMS samples.
-            </div>
+            </p>
           </div>
         </div>
 
-        <!-- Right Column: Live KPIs + 2x2 Synchronized Telemetry Charts -->
-        <div>
-          <div class="kpi-grid" id="live-kpi-grid">
-            <div class="kpi-card">
-              <div class="k-label"><span>Viable Biomass X_v</span><span class="mono">g/L</span></div>
-              <div class="k-main" id="kpi-xv">--</div>
-              <div class="k-sub" id="kpi-xv-sub">--</div>
+        <!-- Right 60%: Status Bar, Readout Ledger, Legend, Question-Driven 2x2 Charts -->
+        <div class="telemetry-col">
+          <div class="status-bar" id="sim-status-banner" data-state="loading" role="status" aria-live="polite">
+            <span id="sim-status-text">[LOADING] Initializing GAM-86 (B=15) and Padé EKF engine...</span>
+            <span class="mono" id="sim-timing-badge">0 ms eval</span>
+          </div>
+
+          <div class="readout-ledger" id="live-kpi-grid" aria-label="Current batch state telemetry">
+            <div class="readout-cell">
+              <div class="r-head"><span>Viable Biomass X_v</span><span class="mono">g/L</span></div>
+              <div class="r-val" id="kpi-xv">--</div>
+              <div class="r-sub" id="kpi-xv-sub">--</div>
             </div>
-            <div class="kpi-card">
-              <div class="k-label"><span>Unmeasured Dead X_d</span><span class="mono">g/L</span></div>
-              <div class="k-main" id="kpi-xd">--</div>
-              <div class="k-sub" id="kpi-xd-sub">Zero X_d sensor used</div>
+            <div class="readout-cell">
+              <div class="r-head"><span>Unmeasured Dead X_d</span><span class="mono">g/L</span></div>
+              <div class="r-val" id="kpi-xd">--</div>
+              <div class="r-sub" id="kpi-xd-sub">Zero X_d sensor used</div>
             </div>
-            <div class="kpi-card">
-              <div class="k-label"><span>Dissolved Oxygen DO</span><span class="mono">% air</span></div>
-              <div class="k-main" id="kpi-do">--</div>
-              <div class="k-sub" id="kpi-do-sub">--</div>
+            <div class="readout-cell">
+              <div class="r-head"><span>Dissolved Oxygen DO</span><span class="mono">% air</span></div>
+              <div class="r-val" id="kpi-do">--</div>
+              <div class="r-sub" id="kpi-do-sub">--</div>
             </div>
-            <div class="kpi-card">
-              <div class="k-label"><span>Substrate S (S_crit 0.35)</span><span class="mono">g/L</span></div>
-              <div class="k-main" id="kpi-s">--</div>
-              <div class="k-sub" id="kpi-s-sub">--</div>
+            <div class="readout-cell">
+              <div class="r-head"><span>Substrate S (S_crit 0.35)</span><span class="mono">g/L</span></div>
+              <div class="r-val" id="kpi-s">--</div>
+              <div class="r-sub" id="kpi-s-sub">--</div>
             </div>
-            <div class="kpi-card">
-              <div class="k-label"><span>Acetate A / Product P</span><span class="mono">g/L</span></div>
-              <div class="k-main" id="kpi-ap">--</div>
-              <div class="k-sub" id="kpi-ap-sub">--</div>
+            <div class="readout-cell">
+              <div class="r-head"><span>Acetate A / Product P</span><span class="mono">g/L</span></div>
+              <div class="r-val" id="kpi-ap">--</div>
+              <div class="r-sub" id="kpi-ap-sub">--</div>
             </div>
-            <div class="kpi-card">
-              <div class="k-label"><span>Volume V / Feed F</span><span class="mono">L / L/h</span></div>
-              <div class="k-main" id="kpi-vf">--</div>
-              <div class="k-sub" id="kpi-vf-sub">--</div>
+            <div class="readout-cell">
+              <div class="r-head"><span>Volume V / Feed F</span><span class="mono">L / L/h</span></div>
+              <div class="r-val" id="kpi-vf">--</div>
+              <div class="r-sub" id="kpi-vf-sub">--</div>
             </div>
-            <div class="kpi-card">
-              <div class="k-label"><span>Specific Growth mu</span><span class="mono">1/h</span></div>
-              <div class="k-main" id="kpi-mu">--</div>
-              <div class="k-sub" id="kpi-mu-sub">--</div>
+            <div class="readout-cell">
+              <div class="r-head"><span>Specific Growth mu</span><span class="mono">1/h</span></div>
+              <div class="r-val" id="kpi-mu">--</div>
+              <div class="r-sub" id="kpi-mu-sub">--</div>
             </div>
-            <div class="kpi-card">
-              <div class="k-label"><span>Full-Batch EKF Ratio</span><span class="mono">Hyb/Nom</span></div>
-              <div class="k-main" id="kpi-ekf">--</div>
-              <div class="k-sub" id="kpi-ekf-sub">--</div>
+            <div class="readout-cell">
+              <div class="r-head"><span>Full-Batch EKF Ratio</span><span class="mono">Hyb/Nom</span></div>
+              <div class="r-val" id="kpi-ekf">--</div>
+              <div class="r-sub" id="kpi-ekf-sub">--</div>
             </div>
           </div>
 
-          <div class="legend-bar" aria-label="Chart trace legend">
-            <span class="legend-item"><span class="swatch" style="background: var(--hyb);"></span>Hybrid EKF Estimate</span>
-            <span class="legend-item"><span class="swatch band"></span>EKF +/- 95% CI</span>
-            <span class="legend-item"><span class="swatch dashed"></span>Nominal Baseline (Uncorrected)</span>
+          <div class="trace-legend" aria-label="Chart trace legend">
+            <span class="legend-item"><span class="swatch swatch-hyb"></span>Hybrid EKF Estimate</span>
+            <span class="legend-item"><span class="swatch swatch-band"></span>EKF +/- 95% CI</span>
+            <span class="legend-item"><span class="swatch swatch-nom"></span>Uncorrected Nominal</span>
             <span class="legend-item" id="legend-gt-item" style="display: none;">
-              <span class="swatch" style="background: var(--gt);"></span>Ground-Truth Plant (Validation)
+              <span class="swatch swatch-gt"></span>Ground-Truth Plant (Validation)
             </span>
-            <span class="legend-item">
-              <span style="display:inline-block;width:7px;height:7px;background:var(--ink);transform:rotate(45deg);"></span>
-              At-Line LIMS (1.0 h)
-            </span>
+            <span class="legend-item"><span class="swatch-lims"></span>At-Line LIMS (1.0 h)</span>
           </div>
 
           <div class="charts-grid">
-            <div class="chart-card">
-              <div class="chart-card-head">
-                <h3>Biomass (X_v) &amp; Inferred Lysis (X_d)</h3>
-                <span class="chart-card-readout" id="readout-chart-1">--</span>
+            <div class="chart-panel">
+              <div class="chart-header">
+                <h3>How accurately does the EKF infer unmeasured cell lysis (X_d) from X_v?</h3>
+                <span class="chart-readout" id="readout-chart-1">--</span>
               </div>
-              <div class="chart-canvas-host"><canvas id="chart-biomass"></canvas></div>
+              <div class="chart-canvas-host"><canvas id="chart-biomass" aria-label="Viable and dead biomass trajectories"></canvas></div>
             </div>
 
-            <div class="chart-card">
-              <div class="chart-card-head">
-                <h3>Dissolved Oxygen C_L &amp; Rheology k_L a</h3>
-                <span class="chart-card-readout" id="readout-chart-2">--</span>
+            <div class="chart-panel">
+              <div class="chart-header">
+                <h3>Does broth viscosity damp oxygen transfer (k_L a) toward the 20% DO floor?</h3>
+                <span class="chart-readout" id="readout-chart-2">--</span>
               </div>
-              <div class="chart-canvas-host"><canvas id="chart-do"></canvas></div>
+              <div class="chart-canvas-host"><canvas id="chart-do" aria-label="Dissolved oxygen and kLa trajectories"></canvas></div>
             </div>
 
-            <div class="chart-card">
-              <div class="chart-card-head">
-                <h3>Substrate (S), Acetate (A) &amp; Product (P)</h3>
-                <span class="chart-card-readout" id="readout-chart-3">--</span>
+            <div class="chart-panel">
+              <div class="chart-header">
+                <h3>When does substrate overflow (S &gt; 0.35 g/L) trigger inhibitory acetate (A)?</h3>
+                <span class="chart-readout" id="readout-chart-3">--</span>
               </div>
-              <div class="chart-canvas-host"><canvas id="chart-metabolites"></canvas></div>
+              <div class="chart-canvas-host"><canvas id="chart-metabolites" aria-label="Substrate, acetate, and product trajectories"></canvas></div>
             </div>
 
-            <div class="chart-card">
-              <div class="chart-card-head">
-                <h3>Feed F, Growth mu &amp; Subspace DoV D_M</h3>
-                <span class="chart-card-readout" id="readout-chart-4">--</span>
+            <div class="chart-panel">
+              <div class="chart-header">
+                <h3>How does mu-stat control respond when Mahalanobis distance (D_M) nears p99?</h3>
+                <span class="chart-readout" id="readout-chart-4">--</span>
               </div>
-              <div class="chart-canvas-host"><canvas id="chart-control-dov"></canvas></div>
+              <div class="chart-canvas-host"><canvas id="chart-control-dov" aria-label="Specific growth rate and Mahalanobis distance trajectories"></canvas></div>
             </div>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- Section 2: Industrial Inspiration & Grey-Box Physics -->
-    <section id="industrial-context" class="case-section">
-      <div class="section-head">
+    <!-- Section 2: Grey-Box Formulation & Conservation (Asymmetric Editorial Split) -->
+    <section id="greybox-formulation" class="doc-section">
+      <div class="section-header">
         <div>
-          <div class="section-kicker">Section 02 : Problem Motivation &amp; Mathematical Design</div>
-          <h2>Industrial Inspiration: Bridging Mechanistic Rigor &amp; ML Residuals</h2>
-          <p class="section-desc">
-            Inspired by biopharma upstream process development specifications (Eli Lilly's AI/ML Upstream
-            Cell Culture Modeling &amp; Process Development benchmark, R-108742) targeting predictive digital
-            twins that survive benchtop-to-manufacturing scale transfer under ICH Q8-Q14 expectations.
+          <div class="section-num">02 / Problem Motivation &amp; Mathematical Design</div>
+          <h2>Serial Grey-Box Physics and Geometric Scale Transfer</h2>
+          <p class="section-lead">
+            Inspired by biopharma upstream process development specifications (Eli Lilly R-108742 Upstream Cell
+            Culture Modeling benchmark) targeting predictive digital twins that preserve conservation across 5 L to
+            1000 L vessels under ICH Q8 to Q14 expectations.
           </p>
         </div>
       </div>
 
-      <div class="two-col">
-        <div class="panel">
-          <h3 class="panel-title">Why Black-Box &amp; Parallel Neural ODEs Fail CMC Review</h3>
-          <p style="font-size: 13.5px; color: var(--muted); margin: 10px 0;">
-            In fed-batch recombinant E. coli BL21 fermentation, simple Monod + Luedeking-Piret equations
-            capture stoichiometry well at low cell density, but drift severely once high cell density alters
-            broth viscosity (damping oxygen transfer k_L a), Crabtree overflow triggers inhibitory acetate
-            synthesis, or impeller shear tip speed and starvation accelerate unmeasured cell lysis (X_d).
+      <div class="editorial-split">
+        <div class="prose-col">
+          <h3>Why Black-Box and Parallel Neural ODEs Fail CMC Review</h3>
+          <p>
+            In fed-batch recombinant E. coli BL21 fermentation, Monod and Luedeking-Piret equations capture
+            stoichiometry at low cell density, then drift once high biomass viscosity damps oxygen transfer
+            (k_La), Crabtree overflow triggers inhibitory acetate accumulation, or impeller shear tip speed and
+            starvation accelerate unmeasured cell lysis (X_d).
           </p>
-          <p style="font-size: 13.5px; color: var(--muted); margin: 0 0 10px;">
-            Adding an unconstrained neural residual outside the balances (dx/dt = f_mech + f_nn) breaks mass
-            conservation, can push states negative (S &lt; 0), and fails across reactor volumes (5 L to 1000 L).
-            Following von Stosch et al. (2014) and Schweidtmann et al. (2024), our twin enforces a strictly
+          <p>
+            Adding an unconstrained neural residual outside the balances (dx/dt = f_mech + f_nn) violates mass
+            conservation, can push substrate or dissolved oxygen negative, and breaks across reactor scales.
+            Following von Stosch et al. (2014) and Schweidtmann et al. (2024), this twin enforces a strictly
             <strong>serial grey-box structure</strong> where GAM-86 predicts only intensive biological and
-            rheological multipliers (delta_kd, eta_kla, q_A_prod, q_A_cons, eta_mu) inside the invariant
-            stoichiometric shell.
+            rheological rates inside an invariant stoichiometric shell.
           </p>
-          <div class="equation-box">
+          <div class="equation-ledger">
             dX_v/dt = (mu_mech * eta_mu - (k_d0 + delta_kd) - D) * X_v<br />
             dX_d/dt = (k_d0 + delta_kd) * X_v - D * X_d<br />
             dS/dt   = D*(S_feed - S) - (mu/Y_XS + m_s*s_av + q_P/Y_PS + q_A_prod/Y_AS)*X_v<br />
             dC_L/dt = k_La_nom*eta_kla*(C* - C_L) - 1000*(mu/Y_XO + m_o*o2_av + q_A_cons/Y_AO)*X_v - D*C_L
           </div>
+          <p class="caption-note">
+            Reference hydrodynamic baselines match equal gassed power per volume (Pg/V) and superficial gas
+            velocity (v_s): (450 RPM, 1.20 vvm) at 5 L maps to (134.8 RPM, 0.205 vvm) at 1000 L with k_La_nom
+            invariant within 1e-6 relative error.
+          </p>
         </div>
 
-        <div class="panel">
-          <h3 class="panel-title">Architecture Comparison Across Scale &amp; Conservation</h3>
-          <div class="table-scroll">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Design Choice</th>
-                  <th>Black-Box / Parallel NODE</th>
-                  <th>Serial GAM-86 Hybrid Twin (Ours)</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td>Mass &amp; Stoichiometry</td>
-                  <td>Unconstrained dx/dt drift</td>
-                  <td><span class="pill-pass">Exact</span> Elemental Y_AS, Y_AO, Y_XS coupling</td>
-                </tr>
-                <tr>
-                  <td>Boundary Positivity</td>
-                  <td>Can predict S &lt; 0 or C_L &lt; 0</td>
-                  <td><span class="pill-pass">Exact</span> Exponential-Rosenbrock phi1(z)</td>
-                </tr>
-                <tr>
-                  <td>Parameter Count</td>
-                  <td>~5,220 MLP weights (overfits 10 batches)</td>
-                  <td><span class="pill-pass">86 params</span> Parsimonious GAM + B=15 bag</td>
-                </tr>
-                <tr>
-                  <td>5 L -&gt; 1000 L Transfer</td>
-                  <td>Breaks if V or RPM enters ML inputs</td>
-                  <td><span class="pill-pass">Invariant</span> Uses Pg/V, v_s, v_tip, X_tot only</td>
-                </tr>
-                <tr>
-                  <td>Out-of-Domain Safety</td>
-                  <td>Unbounded silent extrapolation</td>
-                  <td><span class="pill-pass">DoV Gate</span> Subspace Mahalanobis -&gt; prior</td>
-                </tr>
-              </tbody>
-            </table>
+        <div>
+          <div class="panel">
+            <div class="panel-header">
+              <h3 class="panel-title">Architecture Comparison Across Scale and Conservation</h3>
+            </div>
+            <div class="table-scroll">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Design Choice</th>
+                    <th>Black-Box / Parallel NODE</th>
+                    <th>Serial GAM-86 Hybrid Twin (Ours)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Mass &amp; Stoichiometry</td>
+                    <td>Unconstrained dx/dt drift</td>
+                    <td><span class="mark-pass">Exact</span> Elemental Y_AS, Y_AO, Y_XS coupling</td>
+                  </tr>
+                  <tr>
+                    <td>Boundary Positivity</td>
+                    <td>Can predict S &lt; 0 or C_L &lt; 0</td>
+                    <td><span class="mark-pass">Exact</span> Exponential-Rosenbrock phi1(z)</td>
+                  </tr>
+                  <tr>
+                    <td>Parameter Count</td>
+                    <td>5,220 MLP weights (overfits 10 batches)</td>
+                    <td><span class="mark-pass">86 params</span> Parsimonious GAM + B=15 bag</td>
+                  </tr>
+                  <tr>
+                    <td>5 L to 1000 L Transfer</td>
+                    <td>Breaks if V or RPM enters ML inputs</td>
+                    <td><span class="mark-pass">Invariant</span> Uses Pg/V, v_s, v_tip, X_tot only</td>
+                  </tr>
+                  <tr>
+                    <td>Out-of-Domain Safety</td>
+                    <td>Unbounded silent extrapolation</td>
+                    <td><span class="mark-pass">DoV Gate</span> Subspace Mahalanobis to prior</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
-          <p style="font-size: 12.5px; color: var(--muted); margin: 8px 0 0;">
-            Reference hydrodynamic baselines are matched by equal gassed power per volume (Pg/V) and
-            superficial gas velocity (v_s): e.g., (450 RPM, 1.20 vvm) at 5 L maps identically to
-            (134.8 RPM, 0.205 vvm) at 1000 L with k_L a_nom invariant to &lt; 1e-6 relative difference.
-          </p>
         </div>
       </div>
     </section>
 
-    <!-- Section 3: Adversarial Multi-Agent Engineering Workflow -->
-    <section id="adversarial-methodology" class="case-section">
-      <div class="section-head">
+    <!-- Section 3: Adversarial Remediation Dossier -->
+    <section id="remediation-dossier" class="doc-section">
+      <div class="section-header">
         <div>
-          <div class="section-kicker">Section 03 : Separation of Powers &amp; Anti-Reward-Hacking</div>
-          <h2>Adversarial Multi-Agent Engineering Methodology</h2>
-          <p class="section-desc">
-            Engineered inside Google Antigravity Orchestrator using a strict Principal Investigator vs. Lead
-            Engineer split: an adversarial read-only bioprocess auditor probed live Python internals with
-            independent scripts to uncover hidden data leaks and numerical instabilities before signing off.
+          <div class="section-num">03 / Separation of Powers &amp; Iterative Remediation</div>
+          <h2>Adversarial Multi-Agent Audit and Technical Deep-Dives</h2>
+          <p class="section-lead">
+            Developed under a Principal Investigator vs. Lead Engineer split: a read-only adversarial bioprocess
+            auditor executed independent numerical probes to expose data leaks and stiff-Jacobian defects across
+            three audit cycles before signing off at 9.2/10 (GO).
           </p>
         </div>
       </div>
 
-      <div class="disclaimer-box" role="note">
-        <strong>Methodological Attribution Disclaimer:</strong> The adversarial auditor agent
-        (<span class="mono">moritz_von_stosch_auditor</span>) is a literature-grounded AI technical
-        review persona created for internal code verification and inspired by Dr. Moritz von Stosch's
-        published hybrid-modeling papers (RWTH Aachen, Porto, Newcastle, GSK Vaccines, DataHow AG, HINA
-        Bioventures terminology). It is not affiliated with, reviewed by, or an endorsement from Dr. Moritz
-        von Stosch.
+      <div class="attribution-note" role="note">
+        <strong>Methodological Attribution Note:</strong> The adversarial auditor persona
+        (<code>moritz_von_stosch_auditor</code>) is an internal literature-grounded review specification inspired
+        by Dr. Moritz von Stosch's published hybrid-modeling literature (von Stosch et al., 2014, 2016; Pinto
+        et al., 2019; Portela et al., 2020; Hutter et al., 2021; Narayanan et al., 2023; Schweidtmann et al.,
+        2024). It is not affiliated with or endorsed by Dr. Moritz von Stosch.
       </div>
 
-      <div class="arch-diagram" aria-label="Adversarial multi-agent workflow">
-        <div class="arch-node">
-          <h4>1. Primary Literature Corpus</h4>
-          <p>
-            Compiled specifications from von Stosch et al. (2014, 2016), Pinto et al. (2019), Portela et al.
-            (2020), Hutter et al. (2021), Narayanan et al. (2023), and Schweidtmann et al. (2024) into
-            <span class="mono">moritz_von_stosch_auditor.md</span>.
-          </p>
-        </div>
-        <div class="arch-arrow">-&gt;</div>
-        <div class="arch-node">
-          <h4>2. Read-Only Adversarial PI</h4>
-          <p>
-            Prohibited from editing source code. Executed fresh numerical probes checking X_d supervision
-            weights, Stage-1 oracle leaks, VJP finite differences, 5 L -&gt; 1000 L invariance, EKF sensor
-            parity, and OOD extrapolation.
-          </p>
-        </div>
-        <div class="arch-arrow">-&gt;</div>
-        <div class="arch-node">
-          <h4>3. Lead Engineer &amp; Verification</h4>
-          <p>
-            Implemented exact mathematical prescriptions (Patankar phi1, discrete adjoint VJP, iDoE 6-param
-            ID, expm EKF, subspace DoV), locked anti-reward-hacking invariants, and passed 8/8 pytest gates.
-          </p>
-        </div>
-      </div>
+      <ol class="protocol-list" aria-label="Anti-reward-hacking engineering guarantees">
+        <li class="protocol-row">
+          <div class="protocol-step">1. Zero Unmeasured X_d Leakage</div>
+          <div class="protocol-detail">
+            Training tensor builder pins observation weights <code>w_obs[:, :, 1] == 0.0</code>. Dead biomass
+            X_d is inferred strictly through coupled glucose uptake and oxygen balance via exact reverse-mode
+            discrete adjoint VJP.
+          </div>
+        </li>
+        <li class="protocol-row">
+          <div class="protocol-step">2. Sensor-Parity EKF Fairness</div>
+          <div class="protocol-detail">
+            Hybrid EKF and Nominal EKF receive identical <code>Q_DEFAULT</code>, identical initial
+            <code>P0_DEFAULT</code>, identical sensor cadences (online [0,3,6], at-line [0,2,3,4,6]), and
+            identical noisy measurement realizations.
+          </div>
+        </li>
+        <li class="protocol-row">
+          <div class="protocol-step">3. Plant-Only Fault Isolation</div>
+          <div class="protocol-detail">
+            Unmeasured feed dilution (S_feed drop at t &gt;= 7.0 h) acts solely on the plant ODE. Controllers
+            and EKFs receive <code>S_feed = None</code> and must reject the fault purely through Kalman
+            innovation and feedback.
+          </div>
+        </li>
+      </ol>
 
-      <div class="three-col">
-        <div class="panel">
-          <h4 style="margin: 0 0 6px; font-size: 13.5px;">Zero Unmeasured X_d Leakage</h4>
-          <p style="margin: 0; font-size: 12.5px; color: var(--muted);">
-            Training tensor builder sets observation weights <span class="mono">w_obs[:, :, 1] == 0.0</span>.
-            Dead biomass X_d is inferred purely indirectly through coupled glucose uptake and oxygen balance via
-            exact reverse-mode VJP.
-          </p>
-        </div>
-        <div class="panel">
-          <h4 style="margin: 0 0 6px; font-size: 13.5px;">Sensor-Parity EKF Fairness</h4>
-          <p style="margin: 0; font-size: 12.5px; color: var(--muted);">
-            Both Hybrid EKF and Nominal EKF share identical <span class="mono">Q_DEFAULT</span>, identical
-            initial <span class="mono">P0_DEFAULT</span>, identical measurement indices ([0,3,6] online,
-            [0,2,3,4,6] at-line), and identical noisy sensor vectors.
-          </p>
-        </div>
-        <div class="panel">
-          <h4 style="margin: 0 0 6px; font-size: 13.5px;">Plant-Only Fault Isolation</h4>
-          <p style="margin: 0; font-size: 12.5px; color: var(--muted);">
-            Unmeasured feed dilution (<span class="mono">S_feed</span> drop at t &gt;= 7 h) acts solely on
-            the plant ODE. Controllers and EKFs receive <span class="mono">S_feed = None</span> so they must
-            adapt purely through feedback and Kalman innovation.
-          </p>
-        </div>
+      <div class="table-scroll" style="margin-bottom: 18px;">
+        <table class="data-table" id="audit-progression-table">
+          <thead>
+            <tr>
+              <th>Audit Cycle</th>
+              <th class="num">Score</th>
+              <th>Verdict</th>
+              <th class="num">P0</th>
+              <th class="num">P1</th>
+              <th>Summary of Findings &amp; Remediation</th>
+            </tr>
+          </thead>
+          <tbody id="audit-progression-tbody"></tbody>
+        </table>
       </div>
-    </section>
-
-    <!-- Section 4: Engineering Challenges Overcome (Iteration 0 -> Iteration 2) -->
-    <section id="audit-progression" class="case-section">
-      <div class="section-head">
-        <div>
-          <div class="section-kicker">Section 04 : Iterative Remediation (2.6 -&gt; 6.4 -&gt; 9.2 / 10)</div>
-          <h2>Challenges Overcome Across Three Audit Cycles</h2>
-          <p class="section-desc">
-            Click through the 6 engineering bottlenecks exposed during live adversarial probing and verify the
-            exact mathematical fixes and post-remediation benchmark tables pulled directly from the exported model.
-          </p>
-        </div>
-      </div>
-
-      <div class="audit-timeline" id="audit-timeline-cards"></div>
 
       <div class="panel">
-        <div class="tabs-bar" role="tablist" aria-label="Engineering challenges tabs">
-          <button type="button" class="tab-btn active" role="tab" aria-selected="true" data-tab="c1">
+        <div class="tabs-bar" role="tablist" aria-label="Engineering challenges deep dives">
+          <button type="button" class="tab-btn active" role="tab" id="tabbtn-c1" aria-selected="true" aria-controls="tab-c1" tabindex="0" data-tab="c1">
             1. Positivity &amp; Stiff Oxygen
           </button>
-          <button type="button" class="tab-btn" role="tab" aria-selected="false" data-tab="c2">
+          <button type="button" class="tab-btn" role="tab" id="tabbtn-c2" aria-selected="false" aria-controls="tab-c2" tabindex="-1" data-tab="c2">
             2. Zero X_d Leak &amp; VJP
           </button>
-          <button type="button" class="tab-btn" role="tab" aria-selected="false" data-tab="c3">
+          <button type="button" class="tab-btn" role="tab" id="tabbtn-c3" aria-selected="false" aria-controls="tab-c3" tabindex="-1" data-tab="c3">
             3. iDoE 6-Param ID (14 Seeds)
           </button>
-          <button type="button" class="tab-btn" role="tab" aria-selected="false" data-tab="c4">
-            4. 5 L -&gt; 1000 L Scale Transfer
+          <button type="button" class="tab-btn" role="tab" id="tabbtn-c4" aria-selected="false" aria-controls="tab-c4" tabindex="-1" data-tab="c4">
+            4. 5 L to 1000 L Scale Transfer
           </button>
-          <button type="button" class="tab-btn" role="tab" aria-selected="false" data-tab="c5">
-            5. Held-Out Regimes &amp; Disturbances
+          <button type="button" class="tab-btn" role="tab" id="tabbtn-c5" aria-selected="false" aria-controls="tab-c5" tabindex="-1" data-tab="c5">
+            5. Held-Out Regimes &amp; Faults
           </button>
-          <button type="button" class="tab-btn" role="tab" aria-selected="false" data-tab="c6">
-            6. GAM-86 AIC/BIC &amp; Windows BLAS
+          <button type="button" class="tab-btn" role="tab" id="tabbtn-c6" aria-selected="false" aria-controls="tab-c6" tabindex="-1" data-tab="c6">
+            6. GAM-86 AIC/BIC &amp; BLAS
           </button>
         </div>
 
-        <!-- Tab 1 -->
-        <div class="tab-panel active" id="tab-c1" role="tabpanel">
-          <h3 style="margin: 0 0 8px; font-size: 15px;">Mass-Balance Positivity &amp; Unclipped Stiff Oxygen EKF</h3>
-          <p style="font-size: 13.5px; color: var(--muted);">
-            Oxygen transfer at high RPM creates a stiff eigenvalue around <span class="mono">lambda * dt = -149.95</span>
-            over a 0.1 h control interval. Iteration 0 clipped Jacobian eigenvalues artificially (distorting
-            covariance) and allowed Euler steps to drive substrate S negative at starvation boundaries.
+        <div class="tab-panel active" id="tab-c1" role="tabpanel" aria-labelledby="tabbtn-c1">
+          <h3>Mass-Balance Positivity and Unclipped Stiff Oxygen EKF</h3>
+          <p>
+            Oxygen transfer at high RPM creates a stiff eigenvalue around <code>lambda * dt = -149.95</code> over
+            a 0.1 h control step. Iteration 0 artificially clipped Jacobian eigenvalues (distorting covariance)
+            and permitted Euler steps to drive substrate S negative at starvation boundaries.
           </p>
-          <div class="equation-box">
-            phi_1(z) = (1 - exp(-z)) / z  (with smooth Taylor series for |z| &lt;= 1e-5)<br />
+          <div class="equation-ledger">
+            phi_1(z) = (1 - exp(-z)) / z  (smooth Taylor expansion for |z| &lt;= 1e-5)<br />
             C_L(k+1) = C_L(k) + dt * phi_1((k_La + D + dOUR/dC_L)*dt) * (k_La*(C* - C_L) - OUR - D*C_L)<br />
             EKF Covariance: P_k+1|k = expm(F_k * dt) * P_k * expm(F_k * dt)^T + (Q_base + G * Sigma_NN * G^T) * dt
           </div>
-          <p style="font-size: 13px; color: var(--muted); margin-bottom: 0;">
-            Paired with the 7x5 stoichiometric Jacobian G projecting epistemic standard deviations
-            <span class="mono">[std_kd, std_kla, std_qp, std_qc, std_mu]</span> directly into state covariance
-            and Joseph-stabilized updates, both plant and filter stay strictly non-negative while cutting
-            closed-loop state nRMSE by more than 50% compared to the Nominal EKF across all scenarios.
+          <p>
+            Combined with the 7x5 stoichiometric Jacobian G projecting epistemic standard deviations
+            <code>[std_kd, std_kla, std_qp, std_qc, std_mu]</code> into state covariance and Joseph-stabilized
+            updates, both plant and filter stay strictly non-negative while cutting closed-loop nRMSE by more than
+            50% compared to the Nominal EKF across all scenarios.
           </p>
         </div>
 
-        <!-- Tab 2 -->
-        <div class="tab-panel" id="tab-c2" role="tabpanel">
-          <h3 style="margin: 0 0 8px; font-size: 15px;">Eliminating Unmeasured Dead-Cell Leakage &amp; Oracle Stage-1 Death</h3>
-          <p style="font-size: 13.5px; color: var(--muted);">
-            Iteration 1 Audit Defect <span class="mono">D1</span> (P0) discovered that Stage 1's rollout
-            quietly invoked <span class="mono">true_dynamic_death_rate()</span> while estimating kinetic
-            constants, and <span class="mono">D3</span> (P1) uncovered a double-gating multiplication on
-            <span class="mono">q_A_prod</span> / <span class="mono">q_A_cons</span> in
-            <span class="mono">compute_rates()</span> that attenuated low-acetate uptake by up to 71.3%.
+        <div class="tab-panel" id="tab-c2" role="tabpanel" aria-labelledby="tabbtn-c2" hidden>
+          <h3>Eliminating Unmeasured Dead-Cell Leakage and Oracle Stage-1 Death</h3>
+          <p>
+            Iteration 1 Defect <code>D1</code> (P0) uncovered that Stage 1 rollout invoked
+            <code>true_dynamic_death_rate()</code> during kinetic estimation, while <code>D3</code> (P1) caught
+            double-gating multiplication on <code>q_A_prod</code> and <code>q_A_cons</code> in
+            <code>compute_rates()</code> that attenuated low-acetate uptake by up to 71.3%.
           </p>
-          <div class="equation-box">
+          <div class="equation-ledger">
             1. Stage-1 Fix (D1): Replaced oracle death rate with constant basal k_d0 = 0.005 1/h.<br />
             2. Stage-2 VJP Accuracy: Hand-coded reverse-mode discrete adjoint across 86 parameters matched<br />
                central finite differences (eps=1e-6) with max_rel = 6.917e-7, median_rel = 7.841e-9.<br />
@@ -574,16 +570,14 @@
           </div>
         </div>
 
-        <!-- Tab 3 -->
-        <div class="tab-panel" id="tab-c3" role="tabpanel">
-          <h3 style="margin: 0 0 8px; font-size: 15px;">Breaking Parameter Collinearity with Multi-Batch iDoE (14 Seeds)</h3>
-          <p style="font-size: 13.5px; color: var(--muted);">
-            Monod kinetics exhibit strong correlation between mu_max and K_S, and Luedeking-Piret kinetics
-            correlate alpha and beta (<span class="mono">r = -0.867</span>). Audit Defect
-            <span class="mono">D5</span> also flagged that Stage 1 previously left <span class="mono">k_La0</span>
-            uncalibrated. Adding a 3-batch low-acetate orthogonal iDoE protocol with dynamic DO excitation
-            (<span class="mono">B1_high_do, B2_low_mu, B3_ks_idoe</span>) identifies all 6 parameters jointly
-            with <span class="mono" id="stage1-cond-summary">--</span>.
+        <div class="tab-panel" id="tab-c3" role="tabpanel" aria-labelledby="tabbtn-c3" hidden>
+          <h3>Breaking Parameter Collinearity with Multi-Batch iDoE (14 Seeds)</h3>
+          <p>
+            Monod kinetics correlate mu_max and K_S, while Luedeking-Piret correlates alpha and beta
+            (<code>r = -0.867</code>). Defect <code>D5</code> also flagged that Stage 1 left
+            <code>k_La0</code> uncalibrated. Adding a 3-batch low-acetate orthogonal iDoE protocol with dynamic DO
+            excitation (<code>B1_high_do, B2_low_mu, B3_ks_idoe</code>) identifies all 6 parameters jointly with
+            <code id="stage1-cond-summary">--</code>.
           </p>
           <div class="table-scroll">
             <table class="data-table" id="stage1-params-table">
@@ -600,17 +594,16 @@
               <tbody></tbody>
             </table>
           </div>
-          <p class="mono" style="font-size: 12px; color: var(--muted);" id="stage1-14seed-summary">--</p>
+          <p class="mono" id="stage1-14seed-summary">--</p>
         </div>
 
-        <!-- Tab 4 -->
-        <div class="tab-panel" id="tab-c4" role="tabpanel">
-          <h3 style="margin: 0 0 8px; font-size: 15px;">5 L to 1000 L Cross-Scale Hydrodynamic Invariance</h3>
-          <p style="font-size: 13.5px; color: var(--muted);">
+        <div class="tab-panel" id="tab-c4" role="tabpanel" aria-labelledby="tabbtn-c4" hidden>
+          <h3>5 L to 1000 L Cross-Scale Hydrodynamic Invariance</h3>
+          <p>
             Purely intensive feature engineering removes reactor volume V, RPM, and vvm from GAM-86 inputs
-            (verified to &lt; 1e-12 identical neural outputs when queried with equal intensive states at
-            V = 3.5 L vs V = 700.0 L). Hydrodynamic scale-up preserves gassed power density Pg/V and
-            superficial gas velocity v_s while explicitly surfacing impeller tip-speed shear v_tip:
+            (verified to &lt; 1e-12 identical neural outputs when queried with matched intensive states at
+            V = 3.5 L vs V = 700.0 L). Hydrodynamic scale-up preserves gassed power density Pg/V and superficial
+            gas velocity v_s while surfacing impeller tip-speed shear v_tip:
           </p>
           <div class="table-scroll">
             <table class="data-table" id="scale-comparison-table">
@@ -626,15 +619,13 @@
           </div>
         </div>
 
-        <!-- Tab 5 -->
-        <div class="tab-panel" id="tab-c5" role="tabpanel">
-          <h3 style="margin: 0 0 8px; font-size: 15px;">Strictly Held-Out 5-Regime Generalization &amp; 6-Fault EKF Benchmarks</h3>
-          <p style="font-size: 13.5px; color: var(--muted);">
-            Audit Defect <span class="mono">D2</span> flagged that Iteration 1 mixed train+test runs when
-            reporting R2. Post-remediation evaluation strictly isolates the 5 held-out validation regimes
-            (pooled R2: <span class="mono">k_d=0.7334, k_La=0.9699, q_A_net=0.9010, mu=0.9951</span>) across
-            unseen shear, hypoxia dip, starvation pulse, and high overflow, plus all 6 closed-loop
-            disturbance modes with plant-only fault injection (<span class="mono">D4</span>):
+        <div class="tab-panel" id="tab-c5" role="tabpanel" aria-labelledby="tabbtn-c5" hidden>
+          <h3>Strictly Held-Out 5-Regime Generalization and 6-Fault EKF Benchmarks</h3>
+          <p>
+            Defect <code>D2</code> flagged that Iteration 1 mixed train and test runs when reporting R2.
+            Post-remediation evaluation strictly isolates the 5 held-out validation regimes (pooled R2:
+            <code>k_d=0.7334, k_La=0.9699, q_A_net=0.9010, mu=0.9951</code>) plus all 6 closed-loop disturbance
+            modes with plant-only fault injection (<code>D4</code>):
           </p>
           <div class="table-scroll">
             <table class="data-table" id="heldout-regimes-table">
@@ -670,21 +661,16 @@
           </div>
         </div>
 
-        <!-- Tab 6 -->
-        <div class="tab-panel" id="tab-c6" role="tabpanel">
-          <h3 style="margin: 0 0 8px; font-size: 15px;">GAM-86 Information Criterion Selection &amp; Windows BLAS Thread Contention</h3>
-          <p style="font-size: 13.5px; color: var(--muted);">
+        <div class="tab-panel" id="tab-c6" role="tabpanel" aria-labelledby="tabbtn-c6" hidden>
+          <h3>GAM-86 Information Criterion Selection and Windows BLAS Thread Pinning</h3>
+          <p>
             Unweighted Gaussian observation AIC and BIC are reported across (3,2), (4,3), and (5,4) GAM
-            capacities at 0.5 h and 1.0 h cadences. Selecting GAM-86 (86 params, h_ace=5, h_mu=4 at 0.5 h)
-            retains sufficient nonlinear capacity for overflow metabolism and substrate inhibition across
-            all 5 held-out stress regimes (pooled q_A_net R2 = 0.9010, mu R2 = 0.9951) while staying
-            60x smaller than a 5,220-parameter MLP. Note that on the single low-variance
-            <span class="mono">unseen_starve_pulse</span> trace, small near-zero flux residuals yield negative
-            per-batch R2 even while overall trajectory error stays low (Hyb nRMSE 0.0188 vs Nom 0.0931).
-            To run the 15 Dirichlet + residual-perturbed bootstrap optimizations cleanly on Windows
-            <span class="mono">spawn</span> pools, worker initializers pin <span class="mono">OMP_NUM_THREADS=1</span>,
-            <span class="mono">MKL_NUM_THREADS=1</span>, and <span class="mono">OPENBLAS_NUM_THREADS=1</span> to
-            eliminate BLAS thread oversubscription deadlocks.
+            capacities at 0.5 h and 1.0 h cadences. Selecting GAM-86 (86 params, h_ace=5, h_mu=4 at 0.5 h) retains
+            nonlinear capacity for overflow metabolism and substrate inhibition across all 5 held-out stress regimes
+            while remaining 60x smaller than a 5,220-parameter MLP. To execute 15 Dirichlet + residual-perturbed
+            bootstrap optimizations cleanly on Windows <code>spawn</code> pools, worker initializers pin
+            <code>OMP_NUM_THREADS=1</code>, <code>MKL_NUM_THREADS=1</code>, and
+            <code>OPENBLAS_NUM_THREADS=1</code>.
           </p>
           <div class="table-scroll">
             <table class="data-table" id="arch-aic-table">
@@ -702,33 +688,33 @@
               <tbody></tbody>
             </table>
           </div>
-          <p style="font-size: 12.5px; color: var(--muted); margin: 8px 0 0;" id="ood-calibration-summary">--</p>
+          <p id="ood-calibration-summary">--</p>
         </div>
       </div>
     </section>
 
-    <!-- Section 5: Verification Suite & ALCOA+ Provenance -->
-    <section id="verification-scorecard" class="case-section">
-      <div class="section-head">
+    <!-- Section 4: Verification Suite & ALCOA+ Provenance -->
+    <section id="alcoa-provenance" class="doc-section">
+      <div class="section-header">
         <div>
-          <div class="section-kicker">Section 05 : Automated Gates &amp; Traceability</div>
-          <h2>Verification Test Suite (8 / 8 Passed) &amp; ALCOA+ Provenance Chain</h2>
-          <p class="section-desc">
-            Every physical invariant, gradient check, EKF parity assertion, and delayed-LIMS audit replay
-            executes deterministically under pytest without relaxed or skipped assertions.
+          <div class="section-num">04 / Automated Gates &amp; Cryptographic Traceability</div>
+          <h2>Verification Suite (8 / 8 Passed) and ALCOA+ Provenance Chain</h2>
+          <p class="section-lead">
+            Every physical invariant, discrete adjoint gradient check, sensor-parity EKF assertion, and
+            delayed-LIMS audit replay runs deterministically under pytest with zero skipped assertions.
           </p>
         </div>
-        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+        <div class="export-actions">
           <button type="button" class="btn btn-primary" id="download-sim-csv-btn">Download Current Sim CSV</button>
-          <button type="button" class="btn btn-amber" id="download-alcoa-json-btn">Download ALCOA+ Audit JSON</button>
+          <button type="button" class="btn btn-accent" id="download-alcoa-json-btn">Download ALCOA+ Audit JSON</button>
         </div>
       </div>
 
       <div class="two-col">
         <div class="panel">
-          <div class="panel-head">
+          <div class="panel-header">
             <h3 class="panel-title">pytest -v Verification Matrix</h3>
-            <span class="pill-pass">8 / 8 PASSED (310.96 s)</span>
+            <span class="mark-pass">8 / 8 PASSED (310.96 s)</span>
           </div>
           <div class="table-scroll">
             <table class="data-table" id="pytest-matrix-table">
@@ -745,11 +731,11 @@
         </div>
 
         <div class="panel">
-          <div class="panel-head">
-            <h3 class="panel-title">ALCOA+ SHA-256 Event Chain Preview (<span class="mono" id="alcoa-batch-id">FB-BL21</span>)</h3>
-            <span class="mono" style="font-size: 11px; color: var(--gt);" id="alcoa-count-badge">-- events</span>
+          <div class="panel-header">
+            <h3 class="panel-title">ALCOA+ SHA-256 Event Chain (<span class="mono" id="alcoa-batch-id">FB-BL21</span>)</h3>
+            <span class="mono" id="alcoa-count-badge">-- events</span>
           </div>
-          <div class="equation-box" id="alcoa-digests-box" style="margin-top: 0;">Loading SHA-256 digests...</div>
+          <div class="equation-ledger" id="alcoa-digests-box" style="margin-top: 0;">Loading SHA-256 digests...</div>
           <div class="table-scroll">
             <table class="data-table" id="alcoa-events-table">
               <thead>
@@ -769,16 +755,16 @@
 
     <footer class="site-footer">
       <div>
-        <strong>hybrid-fedbatch-twin</strong> : Client-Side Three.js + GAM-86 (B=15) + Padé EKF Case Study
+        <strong>hybrid-fedbatch-twin</strong>: Zero-backend client-side GAM-86 (B=15) + Padé EKF bioreactor digital twin
       </div>
       <div class="mono">
-        Zero-Backend Static Deployment | <a href="https://github.com/premlalpritish-wq/hybrid-fedbatch-twin" target="_blank" rel="noopener noreferrer">Source &amp; Pytest Suite</a>
+        <a href="https://github.com/premlalpritish-wq/hybrid-fedbatch-twin" target="_blank" rel="noopener noreferrer">Repository &amp; Pytest Verification Suite</a>
       </div>
     </footer>
   </main>
 
-  <script src="assets/twin_bundle.js"></script>
-  <script src="twin_engine.js"></script>
+  <script src="assets/twin_bundle.js" defer></script>
+  <script src="twin_engine.js" defer></script>
   <script
     src="https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js"
     defer
