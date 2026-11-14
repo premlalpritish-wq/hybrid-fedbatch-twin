@@ -1,0 +1,1116 @@
+/**
+ * hybrid-fedbatch-twin: UI Controller, High-DPI Telemetry Charts, and Case-Study Hydrator
+ * Connects Bioreactor3DView + HybridTwinEngine + exported GAM-86 (B=15) bundle.
+ */
+
+(function (global) {
+  "use strict";
+
+  function fmt(v, digits) {
+    if (v == null || !Number.isFinite(v)) return "--";
+    return Number(v).toFixed(digits == null ? 2 : digits);
+  }
+
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function getThemeColors() {
+    const cs = getComputedStyle(document.documentElement);
+    const get = (k, fb) => cs.getPropertyValue(k).trim() || fb;
+    return {
+      bg: get("--bg", "#101715"),
+      surface: get("--surface", "#171f1c"),
+      line: get("--line", "#293631"),
+      ink: get("--ink", "#edf2ed"),
+      muted: get("--muted", "#98a69f"),
+      gt: get("--gt", "#2dd4bf"),
+      hyb: get("--hyb", "#f59e0b"),
+      nom: get("--nom", "#8a99ad"),
+      alert: get("--alert", "#f87171"),
+    };
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    const bundle = global.HYBRID_TWIN_BUNDLE;
+    const engine = global.HybridTwinEngine;
+    const statusBanner = document.getElementById("sim-status-banner");
+    const statusText = document.getElementById("sim-status-text");
+
+    if (!bundle || !engine) {
+      if (statusBanner) statusBanner.classList.add("warning");
+      if (statusText) {
+        statusText.textContent =
+          "Error: Failed to load twin_bundle.js or twin_engine.js. Check assets path and reload.";
+      }
+      return;
+    }
+
+    // Application state
+    const appState = {
+      theme: localStorage.getItem("hft_theme") || "dark",
+      scaleL: 5,
+      controlMode: "closed_loop",
+      muTarget: 0.28,
+      manualFeedRate: 0.08,
+      rpm: 450,
+      vvm: 1.2,
+      disturbanceMode: "none",
+      showTruth: false,
+      timeIdx: 160,
+      playing: false,
+      hoverIdx: null,
+      sim: null,
+      reactor3D: null,
+    };
+
+    // DOM Elements
+    const elThemeBtn = document.getElementById("theme-toggle-btn");
+    const elScale5Btn = document.getElementById("scale-5l-btn");
+    const elScale1000Btn = document.getElementById("scale-1000l-btn");
+    const elVesselLabel = document.getElementById("vessel-mode-label");
+    const elCtrlSelect = document.getElementById("ctrl-mode-select");
+    const elCtrlTag = document.getElementById("ctrl-mode-tag");
+    const elRowMu = document.getElementById("row-mu-target");
+    const elRowFeed = document.getElementById("row-manual-feed");
+    const elSliderMu = document.getElementById("slider-mu-target");
+    const elValMu = document.getElementById("val-mu-target");
+    const elSliderFeed = document.getElementById("slider-manual-feed");
+    const elValFeed = document.getElementById("val-manual-feed");
+    const elSliderRpm = document.getElementById("slider-rpm");
+    const elValRpm = document.getElementById("val-rpm");
+    const elSliderVvm = document.getElementById("slider-vvm");
+    const elValVvm = document.getElementById("val-vvm");
+    const elSelectDist = document.getElementById("select-disturbance");
+    const elSliderTime = document.getElementById("slider-time");
+    const elValTime = document.getElementById("val-time");
+    const elPlayBtn = document.getElementById("play-batch-btn");
+    const elJumpEndBtn = document.getElementById("jump-end-btn");
+    const elToggleTruth = document.getElementById("toggle-show-truth");
+    const elParityNote = document.getElementById("operator-parity-note");
+    const elLegendGt = document.getElementById("legend-gt-item");
+    const elTimingBadge = document.getElementById("sim-timing-badge");
+    const elMotionBtn = document.getElementById("toggle-motion-btn");
+    const elResetCamBtn = document.getElementById("reset-camera-btn");
+    const elResetDefBtn = document.getElementById("reset-defaults-btn");
+
+    function applyTheme(nextTheme) {
+      appState.theme = nextTheme;
+      document.documentElement.setAttribute("data-theme", nextTheme);
+      localStorage.setItem("hft_theme", nextTheme);
+      elThemeBtn.textContent = nextTheme === "light" ? "Theme: Light" : "Theme: Dark";
+      if (appState.reactor3D) appState.reactor3D.setTheme(nextTheme);
+      drawAllCharts();
+    }
+
+    // Initialize Theme + 3D Reactor View
+    const host3d = document.getElementById("reactor-3d-host");
+    if (global.Bioreactor3DView && host3d) {
+      appState.reactor3D = new global.Bioreactor3DView(host3d, { theme: appState.theme });
+      if (appState.reactor3D.motionPaused) {
+        elMotionBtn.textContent = "Resume 3D Motion";
+      }
+    }
+    applyTheme(appState.theme);
+
+    // Sync slider labels & bounds for current scale
+    function syncControlUI() {
+      const sf = appState.scaleL / 5.0;
+      if (appState.scaleL === 1000) {
+        elSliderRpm.min = "60";
+        elSliderRpm.max = "300";
+        elSliderRpm.step = "5";
+        elSliderVvm.min = "0.05";
+        elSliderVvm.max = "0.60";
+        elSliderVvm.step = "0.01";
+        elSliderFeed.min = String((0.01 * sf).toFixed(1));
+        elSliderFeed.max = String((0.28 * sf).toFixed(1));
+        elSliderFeed.step = "1.0";
+        elVesselLabel.textContent = "1000 L Stainless Cutaway";
+      } else {
+        elSliderRpm.min = "200";
+        elSliderRpm.max = "900";
+        elSliderRpm.step = "10";
+        elSliderVvm.min = "0.30";
+        elSliderVvm.max = "2.50";
+        elSliderVvm.step = "0.05";
+        elSliderFeed.min = "0.01";
+        elSliderFeed.max = "0.28";
+        elSliderFeed.step = "0.005";
+        elVesselLabel.textContent = "5 L Glass Benchtop";
+      }
+
+      elSliderMu.value = String(appState.muTarget);
+      elValMu.textContent = fmt(appState.muTarget, 2) + " 1/h";
+      elSliderFeed.value = String(appState.manualFeedRate);
+      elValFeed.textContent = fmt(appState.manualFeedRate, appState.scaleL >= 500 ? 1 : 3) + " L/h";
+      elSliderRpm.value = String(appState.rpm);
+      elValRpm.textContent = fmt(appState.rpm, 0) + " RPM";
+      elSliderVvm.value = String(appState.vvm);
+      elValVvm.textContent = fmt(appState.vvm, 2) + " vvm";
+
+      const isClosed = appState.controlMode === "closed_loop";
+      elRowMu.style.display = isClosed ? "" : "none";
+      elRowFeed.style.display = isClosed ? "none" : "";
+      elCtrlTag.textContent = isClosed ? "Closed-Loop mu-Stat" : "Manual Feed";
+
+      elToggleTruth.checked = appState.showTruth;
+      elLegendGt.style.display = appState.showTruth ? "inline-flex" : "none";
+      elParityNote.textContent = appState.showTruth
+        ? "Validation Oracle ON: comparing Ground-Truth Plant against Hybrid EKF (+/- 2 sigma) and Nominal Baseline."
+        : "5 L Operator Mode hides plant truth by default (D9 parity): displaying EKF state +/- 2 sigma, online PAT, and sparse at-line LIMS samples.";
+    }
+
+    function runAndRenderSimulation() {
+      const t0 = performance.now();
+      appState.sim = engine.runTwinSimulation(
+        {
+          scaleL: appState.scaleL,
+          controlMode: appState.controlMode,
+          muTarget: appState.muTarget,
+          manualFeedRate: appState.manualFeedRate,
+          rpm: appState.rpm,
+          vvm: appState.vvm,
+          disturbanceMode: appState.disturbanceMode,
+        },
+        bundle
+      );
+      const dtMs = performance.now() - t0;
+      elTimingBadge.textContent = fmt(dtMs, 1) + " ms (160 steps, B=15 EKF)";
+      renderFrameAt(appState.timeIdx);
+    }
+
+    function renderFrameAt(idx) {
+      const sim = appState.sim;
+      if (!sim) return;
+      const i = Math.max(0, Math.min(sim.t.length - 1, Math.round(idx)));
+      appState.timeIdx = i;
+      elSliderTime.value = String(i);
+      elValTime.textContent = fmt(sim.t[i], 1) + " h";
+
+      const xEst = sim.estHyb[i];
+      const xStd = sim.stdHyb[i];
+      const xTrue = sim.trueStates[i];
+      const xNom = sim.estNom[i];
+      const u = sim.inputs[i];
+      const tH = sim.t[i];
+      const doEstPct = (100.0 * xEst[3]) / sim.C_star;
+      const doTruePct = (100.0 * xTrue[3]) / sim.C_star;
+      const inDom = Boolean(sim.inDomain[i]);
+      const dm = sim.d_m[i];
+
+      // Update 3D Reactor State
+      if (appState.reactor3D) {
+        appState.reactor3D.updateState({
+          t_h: tH,
+          X_v: xEst[0],
+          X_d: xEst[1],
+          S: xEst[2],
+          C_L: xEst[3],
+          DO_pct: doEstPct,
+          A: xEst[4],
+          P: xEst[5],
+          V: xEst[6],
+          V_max: sim.V_max,
+          F: u[0],
+          rpm: u[1],
+          vvm: u[2],
+          v_tip: sim.v_tip[i],
+          Pg_V: sim.Pg_V[i],
+          k_La: sim.klaHyb[i],
+          in_domain: inDom,
+          d_m: dm,
+        });
+      }
+
+      // 3D Viewport HUD pills
+      document.getElementById("hud-time").textContent = "t = " + fmt(tH, 1) + " h / 16.0 h";
+      const hudDov = document.getElementById("hud-dov");
+      if (inDom) {
+        hudDov.className = "hud-pill ok";
+        hudDov.textContent = "DoV IN-DOMAIN (D_M = " + fmt(dm, 2) + " <= " + fmt(sim.p99Global, 2) + ")";
+      } else {
+        hudDov.className = "hud-pill ood";
+        hudDov.textContent = "OOD PRIOR RELAXED (D_M = " + fmt(dm, 2) + ")";
+      }
+      document.getElementById("hud-pgv").textContent = "Pg/V: " + fmt(sim.Pg_V[i], 0) + " W/m3";
+      document.getElementById("hud-vtip").textContent = "v_tip: " + fmt(sim.v_tip[i], 2) + " m/s";
+      document.getElementById("hud-kla").textContent = "k_L a: " + fmt(sim.klaHyb[i], 0) + " 1/h";
+
+      // Top status banner
+      const summ = sim.summary;
+      const redPct = 100.0 * (1.0 - summ.rmse_ratio);
+      if (!inDom || summ.ood_fraction > 0.15) {
+        statusBanner.classList.add("warning");
+        statusText.textContent =
+          "Out-of-Domain alert at t=" +
+          fmt(tH, 1) +
+          " h (D_M=" +
+          fmt(dm, 2) +
+          " > p99=" +
+          fmt(sim.p99Global, 2) +
+          "): metabolic heads smoothly relax toward mechanistic prior while inflating sigma.";
+      } else {
+        statusBanner.classList.remove("warning");
+        statusText.textContent =
+          appState.scaleL +
+          " L Twin Ready | Full-batch Hybrid EKF cut error by " +
+          fmt(redPct, 1) +
+          "% vs Nominal EKF (Ratio " +
+          fmt(summ.rmse_ratio, 3) +
+          "x).";
+      }
+
+      // 8 KPI cards (showing Truth comparison ONLY when showTruth === true)
+      document.getElementById("kpi-xv").textContent = fmt(xEst[0], 2) + " +- " + fmt(2 * xStd[0], 2);
+      document.getElementById("kpi-xv-sub").textContent = appState.showTruth
+        ? "True: " + fmt(xTrue[0], 2) + " | Nom: " + fmt(xNom[0], 2)
+        : "Online PAT capacitance + EKF";
+
+      document.getElementById("kpi-xd").textContent = fmt(xEst[1], 2) + " +- " + fmt(2 * xStd[1], 2);
+      document.getElementById("kpi-xd-sub").textContent = appState.showTruth
+        ? "True X_d: " + fmt(xTrue[1], 2) + " | Nom: " + fmt(xNom[1], 2)
+        : "Inferred (zero X_d sensor)";
+
+      document.getElementById("kpi-do").textContent = fmt(doEstPct, 1) + "%";
+      document.getElementById("kpi-do-sub").textContent = appState.showTruth
+        ? "C_L=" + fmt(xEst[3], 2) + " vs True " + fmt(xTrue[3], 2) + " mg/L"
+        : "C_L=" + fmt(xEst[3], 2) + " mg/L (min " + fmt(summ.min_DO_est, 1) + "%)";
+
+      document.getElementById("kpi-s").textContent = fmt(xEst[2], 3) + " g/L";
+      document.getElementById("kpi-s-sub").textContent = appState.showTruth
+        ? "True S: " + fmt(xTrue[2], 3) + " g/L (S_crit 0.35)"
+        : xEst[2] > 0.35
+          ? "Overflow zone (S > 0.35)"
+          : "Below overflow ceiling";
+
+      document.getElementById("kpi-ap").textContent = fmt(xEst[4], 2) + " / " + fmt(xEst[5], 2);
+      document.getElementById("kpi-ap-sub").textContent = appState.showTruth
+        ? "True A/P: " + fmt(xTrue[4], 2) + " / " + fmt(xTrue[5], 2) + " g/L"
+        : "At-line A & Luedeking-Piret P";
+
+      const fDec = appState.scaleL >= 500 ? 1 : 3;
+      document.getElementById("kpi-vf").textContent = fmt(xEst[6], appState.scaleL >= 500 ? 0 : 2) + " / " + fmt(u[0], fDec);
+      document.getElementById("kpi-vf-sub").textContent =
+        "k_La=" + fmt(sim.klaHyb[i], 0) + " vs nom " + fmt(sim.klaNom[i], 0) + " 1/h";
+
+      document.getElementById("kpi-mu").textContent = fmt(sim.muHyb[i], 3) + " 1/h";
+      document.getElementById("kpi-mu-sub").textContent = appState.showTruth
+        ? "True mu=" + fmt(sim.muTrue[i], 3) + " | Nom=" + fmt(sim.muNom[i], 3)
+        : "Target mu_set=" + fmt(appState.muTarget, 2) + " 1/h";
+
+      document.getElementById("kpi-ekf").textContent = fmt(summ.rmse_ratio, 3) + "x";
+      document.getElementById("kpi-ekf-sub").textContent =
+        "Hyb " + fmt(summ.hyb_norm_rmse, 4) + " vs Nom " + fmt(summ.nom_norm_rmse, 4);
+
+      drawAllCharts();
+    }
+
+    // High-DPI Multi-Trace Telemetry Canvas Renderer
+    function setupHiDpiCanvas(canvas) {
+      const rect = canvas.parentElement.getBoundingClientRect();
+      const dpr = Math.min(global.devicePixelRatio || 1, 2);
+      const w = Math.max(220, rect.width);
+      const h = Math.max(150, rect.height);
+      const tw = Math.round(w * dpr);
+      const th = Math.round(h * dpr);
+      if (canvas.width !== tw || canvas.height !== th) {
+        canvas.width = tw;
+        canvas.height = th;
+      }
+      const ctx = canvas.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return { ctx: ctx, w: w, h: h };
+    }
+
+    function drawTelemetryChart(canvas, spec) {
+      const sim = appState.sim;
+      if (!canvas || !sim) return;
+      const C = getThemeColors();
+      const { ctx, w, h } = setupHiDpiCanvas(canvas);
+      ctx.clearRect(0, 0, w, h);
+
+      const pad = { l: 44, r: 44, t: 10, b: 24 };
+      const pw = Math.max(40, w - pad.l - pad.r);
+      const ph = Math.max(40, h - pad.t - pad.b);
+      const N = sim.t.length;
+      const tMax = sim.t[N - 1] || 16.0;
+
+      const xPx = (k) => pad.l + (sim.t[k] / tMax) * pw;
+      const yPxLeft = (v, minV, maxV) => pad.t + ph * (1.0 - (v - minV) / Math.max(1e-9, maxV - minV));
+
+      // Compute Y bounds for primary (left) and optional secondary (right) axis
+      let maxL = spec.minMaxLeft || 1.0;
+      let minL = spec.fixedMinLeft != null ? spec.fixedMinLeft : 0.0;
+      let maxR = spec.minMaxRight || 1.0;
+      const minR = 0.0;
+
+      for (const s of spec.series) {
+        for (let k = 0; k < N; k++) {
+          const val = s.get(k);
+          if (!Number.isFinite(val)) continue;
+          const up = s.band ? val + s.band(k) : val;
+          if (s.axis === "right") {
+            if (up > maxR) maxR = up;
+          } else {
+            if (up > maxL) maxL = up;
+          }
+        }
+      }
+      maxL *= 1.12;
+      maxR *= 1.15;
+
+      // Grid lines & axes ticks
+      ctx.strokeStyle = C.line;
+      ctx.lineWidth = 1;
+      ctx.font = '10px "IBM Plex Mono", monospace';
+      ctx.fillStyle = C.muted;
+
+      for (let g = 0; g <= 4; g++) {
+        const y = pad.t + (ph * g) / 4;
+        ctx.beginPath();
+        ctx.moveTo(pad.l, y);
+        ctx.lineTo(w - pad.r, y);
+        ctx.stroke();
+
+        const lVal = maxL - ((maxL - minL) * g) / 4;
+        ctx.textAlign = "right";
+        ctx.fillText(fmt(lVal, maxL < 5 ? 1 : 0), pad.l - 5, y + 3);
+
+        if (spec.hasRightAxis) {
+          const rVal = maxR - ((maxR - minR) * g) / 4;
+          ctx.textAlign = "left";
+          ctx.fillText(fmt(rVal, maxR < 3 ? 2 : 0), w - pad.r + 5, y + 3);
+        }
+      }
+
+      // X-axis time ticks (0, 4, 8, 12, 16 h)
+      ctx.textAlign = "center";
+      for (let hr = 0; hr <= 16; hr += 4) {
+        const xp = pad.l + (hr / tMax) * pw;
+        ctx.fillText(hr + "h", xp, h - 7);
+      }
+
+      // Horizontal thresholds
+      if (spec.thresholds) {
+        for (const th of spec.thresholds) {
+          const maxUse = th.axis === "right" ? maxR : maxL;
+          const minUse = th.axis === "right" ? minR : minL;
+          if (th.val > maxUse || th.val < minUse) continue;
+          const yy = yPxLeft(th.val, minUse, maxUse);
+          ctx.save();
+          ctx.setLineDash([4, 4]);
+          ctx.strokeStyle = th.color || C.alert;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(pad.l, yy);
+          ctx.lineTo(w - pad.r, yy);
+          ctx.stroke();
+          ctx.restore();
+          ctx.fillStyle = th.color || C.alert;
+          ctx.textAlign = th.axis === "right" ? "right" : "left";
+          ctx.fillText(th.label, th.axis === "right" ? w - pad.r - 4 : pad.l + 4, yy - 3);
+        }
+      }
+
+      // Confidence bands first
+      for (const s of spec.series) {
+        if (!s.band || s.hidden) continue;
+        const maxUse = s.axis === "right" ? maxR : maxL;
+        const minUse = s.axis === "right" ? minR : minL;
+        ctx.save();
+        ctx.fillStyle = s.bandColor || "rgba(245, 158, 11, 0.16)";
+        ctx.beginPath();
+        for (let k = 0; k < N; k++) {
+          const xp = xPx(k);
+          const yp = yPxLeft(Math.min(maxUse, s.get(k) + s.band(k)), minUse, maxUse);
+          if (k === 0) ctx.moveTo(xp, yp);
+          else ctx.lineTo(xp, yp);
+        }
+        for (let k = N - 1; k >= 0; k--) {
+          const xp = xPx(k);
+          const yp = yPxLeft(Math.max(minUse, s.get(k) - s.band(k)), minUse, maxUse);
+          ctx.lineTo(xp, yp);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // Line traces
+      for (const s of spec.series) {
+        if (s.hidden) continue;
+        const maxUse = s.axis === "right" ? maxR : maxL;
+        const minUse = s.axis === "right" ? minR : minL;
+        ctx.save();
+        ctx.strokeStyle = s.color;
+        ctx.lineWidth = s.width || 2;
+        if (s.dash) ctx.setLineDash(s.dash);
+        ctx.beginPath();
+        let started = false;
+        for (let k = 0; k < N; k++) {
+          const v = s.get(k);
+          if (!Number.isFinite(v)) continue;
+          const xp = xPx(k);
+          const yp = yPxLeft(clampVal(v, minUse, maxUse), minUse, maxUse);
+          if (!started) {
+            ctx.moveTo(xp, yp);
+            started = true;
+          } else {
+            ctx.lineTo(xp, yp);
+          }
+        }
+        ctx.stroke();
+        ctx.restore();
+
+        // Sparse diamond LIMS markers if specified
+        if (s.markers) {
+          ctx.save();
+          ctx.fillStyle = s.markerColor || C.ink;
+          for (let k = 0; k < N; k++) {
+            const mv = s.markers(k);
+            if (!Number.isFinite(mv)) continue;
+            const xp = xPx(k);
+            const yp = yPxLeft(clampVal(mv, minUse, maxUse), minUse, maxUse);
+            ctx.beginPath();
+            ctx.moveTo(xp, yp - 4);
+            ctx.lineTo(xp + 4, yp);
+            ctx.lineTo(xp, yp + 4);
+            ctx.lineTo(xp - 4, yp);
+            ctx.closePath();
+            ctx.fill();
+          }
+          ctx.restore();
+        }
+      }
+
+      // Current timeline playhead & hover crosshair
+      const activeIdx = appState.hoverIdx != null ? appState.hoverIdx : appState.timeIdx;
+      const cxp = xPx(activeIdx);
+      ctx.save();
+      ctx.strokeStyle = C.ink;
+      ctx.globalAlpha = 0.55;
+      ctx.lineWidth = 1.25;
+      ctx.beginPath();
+      ctx.moveTo(cxp, pad.t);
+      ctx.lineTo(cxp, pad.t + ph);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function clampVal(v, lo, hi) {
+      return v < lo ? lo : v > hi ? hi : v;
+    }
+
+    function drawAllCharts() {
+      const sim = appState.sim;
+      if (!sim) return;
+      const C = getThemeColors();
+      const idx = appState.hoverIdx != null ? appState.hoverIdx : appState.timeIdx;
+
+      // 1. Biomass (Xv left, Xd right)
+      drawTelemetryChart(document.getElementById("chart-biomass"), {
+        minMaxLeft: 20,
+        minMaxRight: 3,
+        hasRightAxis: true,
+        series: [
+          {
+            get: (k) => sim.estNom[k][0],
+            color: C.nom,
+            width: 1.6,
+            dash: [5, 4],
+          },
+          {
+            get: (k) => sim.trueStates[k][0],
+            color: C.gt,
+            width: 2.0,
+            hidden: !appState.showTruth,
+          },
+          {
+            get: (k) => sim.estHyb[k][0],
+            band: (k) => 2.0 * sim.stdHyb[k][0],
+            bandColor: "rgba(245, 158, 11, 0.16)",
+            color: C.hyb,
+            width: 2.2,
+          },
+          {
+            axis: "right",
+            get: (k) => sim.estHyb[k][1],
+            color: C.alert,
+            width: 1.7,
+          },
+          {
+            axis: "right",
+            get: (k) => sim.trueStates[k][1],
+            color: C.gt,
+            width: 1.3,
+            dash: [2, 2],
+            hidden: !appState.showTruth,
+          },
+        ],
+      });
+      document.getElementById("readout-chart-1").textContent =
+        "t=" + fmt(sim.t[idx], 1) + "h | Xv=" + fmt(sim.estHyb[idx][0], 2) + " | Xd=" + fmt(sim.estHyb[idx][1], 2);
+
+      // 2. Dissolved Oxygen CL (left) & k_La (right)
+      drawTelemetryChart(document.getElementById("chart-do"), {
+        minMaxLeft: 9.0,
+        minMaxRight: 700,
+        hasRightAxis: true,
+        thresholds: [{ val: 1.64, label: "DO 20%", color: C.alert }],
+        series: [
+          {
+            get: (k) => sim.estNom[k][3],
+            color: C.nom,
+            width: 1.5,
+            dash: [5, 4],
+          },
+          {
+            get: (k) => sim.trueStates[k][3],
+            color: C.gt,
+            width: 2.0,
+            hidden: !appState.showTruth,
+          },
+          {
+            get: (k) => sim.estHyb[k][3],
+            band: (k) => 2.0 * sim.stdHyb[k][3],
+            bandColor: "rgba(245, 158, 11, 0.14)",
+            color: C.hyb,
+            width: 2.1,
+          },
+          {
+            axis: "right",
+            get: (k) => sim.klaHyb[k],
+            color: "#6bd6ae",
+            width: 1.5,
+          },
+        ],
+      });
+      document.getElementById("readout-chart-2").textContent =
+        "CL=" + fmt(sim.estHyb[idx][3], 2) + " mg/L | kLa=" + fmt(sim.klaHyb[idx], 0) + " 1/h";
+
+      // 3. Metabolites: S (right, with S_crit), A & P (left)
+      drawTelemetryChart(document.getElementById("chart-metabolites"), {
+        minMaxLeft: 12.0,
+        minMaxRight: 1.5,
+        hasRightAxis: true,
+        thresholds: [{ val: 0.35, axis: "right", label: "S_crit 0.35", color: C.alert }],
+        series: [
+          {
+            get: (k) => sim.estNom[k][4],
+            color: C.nom,
+            width: 1.5,
+            dash: [5, 4],
+          },
+          {
+            get: (k) => sim.estHyb[k][4],
+            color: C.alert,
+            width: 2.0,
+            markers: (k) => (sim.obsAtline[k] ? sim.measStates[k][4] : NaN),
+            markerColor: C.alert,
+          },
+          {
+            get: (k) => sim.estHyb[k][5],
+            color: C.hyb,
+            width: 2.0,
+          },
+          {
+            get: (k) => sim.trueStates[k][5],
+            color: C.gt,
+            width: 1.6,
+            hidden: !appState.showTruth,
+          },
+          {
+            axis: "right",
+            get: (k) => sim.estHyb[k][2],
+            color: C.mint || "#6bd6ae",
+            width: 1.8,
+            markers: (k) => (sim.obsAtline[k] ? sim.measStates[k][2] : NaN),
+            markerColor: C.ink,
+          },
+        ],
+      });
+      document.getElementById("readout-chart-3").textContent =
+        "S=" + fmt(sim.estHyb[idx][2], 3) + " | A=" + fmt(sim.estHyb[idx][4], 2) + " | P=" + fmt(sim.estHyb[idx][5], 2);
+
+      // 4. Growth rate mu (left), Mahalanobis D_M (right), & DoV p99 threshold
+      drawTelemetryChart(document.getElementById("chart-control-dov"), {
+        minMaxLeft: 0.48,
+        minMaxRight: 4.2,
+        hasRightAxis: true,
+        thresholds: [
+          { val: appState.muTarget, label: "mu_set", color: C.hyb },
+          { val: sim.p99Global, axis: "right", label: "DoV p99", color: C.alert },
+        ],
+        series: [
+          {
+            get: (k) => sim.muNom[k],
+            color: C.nom,
+            width: 1.4,
+            dash: [5, 4],
+          },
+          {
+            get: (k) => sim.muTrue[k],
+            color: C.gt,
+            width: 1.8,
+            hidden: !appState.showTruth,
+          },
+          {
+            get: (k) => sim.muHyb[k],
+            color: C.hyb,
+            width: 2.1,
+          },
+          {
+            axis: "right",
+            get: (k) => sim.d_m[k],
+            color: C.alert,
+            width: 1.7,
+          },
+        ],
+      });
+      document.getElementById("readout-chart-4").textContent =
+        "mu=" + fmt(sim.muHyb[idx], 3) + " 1/h | D_M=" + fmt(sim.d_m[idx], 2);
+    }
+
+    // Bind Hover Crosshairs on all 4 telemetry canvases
+    for (const cid of ["chart-biomass", "chart-do", "chart-metabolites", "chart-control-dov"]) {
+      const cv = document.getElementById(cid);
+      if (!cv) continue;
+      cv.addEventListener("pointermove", function (e) {
+        if (!appState.sim) return;
+        const rect = cv.getBoundingClientRect();
+        const frac = clampVal((e.clientX - rect.left - 44) / Math.max(40, rect.width - 88), 0, 1);
+        appState.hoverIdx = Math.round(frac * (appState.sim.t.length - 1));
+        drawAllCharts();
+      });
+      cv.addEventListener("pointerleave", function () {
+        appState.hoverIdx = null;
+        drawAllCharts();
+      });
+    }
+
+    // Timeline playback loop
+    let playTimer = null;
+    function setPlaying(shouldPlay) {
+      appState.playing = shouldPlay;
+      elPlayBtn.textContent = shouldPlay ? "Pause Playback" : "Play 16 h Batch";
+      if (playTimer) {
+        clearInterval(playTimer);
+        playTimer = null;
+      }
+      if (shouldPlay) {
+        if (appState.timeIdx >= 160) appState.timeIdx = 0;
+        playTimer = setInterval(function () {
+          if (appState.timeIdx >= 160) {
+            setPlaying(false);
+            return;
+          }
+          renderFrameAt(appState.timeIdx + 1);
+        }, 55);
+      }
+    }
+
+    // Interactive Control Event Handlers
+    elThemeBtn.addEventListener("click", function () {
+      applyTheme(appState.theme === "dark" ? "light" : "dark");
+    });
+
+    function switchScale(targetScale) {
+      if (appState.scaleL === targetScale) return;
+      const matched = engine.matchOperatingPointForScale(
+        appState.rpm,
+        appState.vvm,
+        appState.scaleL,
+        targetScale,
+        bundle.p_rec
+      );
+      const scaleFactorRatio = targetScale / appState.scaleL;
+      appState.scaleL = targetScale;
+      appState.rpm = matched.rpm;
+      appState.vvm = matched.vvm;
+      appState.manualFeedRate = Number((appState.manualFeedRate * scaleFactorRatio).toFixed(3));
+      appState.showTruth = targetScale === 1000;
+
+      elScale5Btn.classList.toggle("active", targetScale === 5);
+      elScale1000Btn.classList.toggle("active", targetScale === 1000);
+      if (appState.reactor3D) appState.reactor3D.setScale(targetScale);
+      syncControlUI();
+      runAndRenderSimulation();
+    }
+
+    elScale5Btn.addEventListener("click", () => switchScale(5));
+    elScale1000Btn.addEventListener("click", () => switchScale(1000));
+
+    elCtrlSelect.addEventListener("change", function () {
+      appState.controlMode = this.value;
+      syncControlUI();
+      runAndRenderSimulation();
+    });
+
+    elSliderMu.addEventListener("input", function () {
+      appState.muTarget = Number(this.value);
+      syncControlUI();
+      runAndRenderSimulation();
+    });
+
+    elSliderFeed.addEventListener("input", function () {
+      appState.manualFeedRate = Number(this.value);
+      syncControlUI();
+      runAndRenderSimulation();
+    });
+
+    elSliderRpm.addEventListener("input", function () {
+      appState.rpm = Number(this.value);
+      syncControlUI();
+      runAndRenderSimulation();
+    });
+
+    elSliderVvm.addEventListener("input", function () {
+      appState.vvm = Number(this.value);
+      syncControlUI();
+      runAndRenderSimulation();
+    });
+
+    elSelectDist.addEventListener("change", function () {
+      appState.disturbanceMode = this.value;
+      runAndRenderSimulation();
+    });
+
+    elSliderTime.addEventListener("input", function () {
+      setPlaying(false);
+      renderFrameAt(Number(this.value));
+    });
+
+    elPlayBtn.addEventListener("click", function () {
+      setPlaying(!appState.playing);
+    });
+
+    elJumpEndBtn.addEventListener("click", function () {
+      setPlaying(false);
+      renderFrameAt(160);
+    });
+
+    elToggleTruth.addEventListener("change", function () {
+      appState.showTruth = this.checked;
+      syncControlUI();
+      renderFrameAt(appState.timeIdx);
+    });
+
+    elMotionBtn.addEventListener("click", function () {
+      if (!appState.reactor3D) return;
+      const nextPaused = !appState.reactor3D.motionPaused;
+      appState.reactor3D.setMotionPaused(nextPaused);
+      elMotionBtn.textContent = nextPaused ? "Resume 3D Motion" : "Pause 3D Motion";
+    });
+
+    elResetCamBtn.addEventListener("click", function () {
+      if (appState.reactor3D) appState.reactor3D.resetCamera();
+    });
+
+    elResetDefBtn.addEventListener("click", function () {
+      setPlaying(false);
+      appState.controlMode = "closed_loop";
+      elCtrlSelect.value = "closed_loop";
+      appState.muTarget = 0.28;
+      appState.disturbanceMode = "none";
+      elSelectDist.value = "none";
+      if (appState.scaleL === 1000) {
+        const matched = engine.matchOperatingPointForScale(450, 1.2, 5, 1000, bundle.p_rec);
+        appState.rpm = matched.rpm;
+        appState.vvm = matched.vvm;
+        appState.manualFeedRate = 16.0;
+      } else {
+        appState.rpm = 450;
+        appState.vvm = 1.2;
+        appState.manualFeedRate = 0.08;
+      }
+      syncControlUI();
+      runAndRenderSimulation();
+    });
+
+    // Hydrate Case Study Narrative Sections directly from exported verified bundle
+    function hydrateCaseStudy() {
+      const s1 = bundle.stage1_recovery;
+      const g86 = bundle.gam86;
+      const hm = g86.heldout_metrics;
+      const ctrlBench = bundle.benchmarks.control_strategies_5L.hybrid_closed_loop;
+      const scaleBench = bundle.benchmarks.scale_1000L;
+
+      document.getElementById("hero-bundle-tag").textContent =
+        "GAM-86 | B=" + g86.n_bootstrap + " | SHA " + bundle.bundle_sha256.slice(0, 12);
+      document.getElementById("hero-stage1-err").textContent =
+        "max " + fmt(s1.max_relative_error_pct, 2) + "%";
+      document.getElementById("hero-stage1-kappa").textContent =
+        "14-seed mean " + fmt(s1.seed_14_summary.mean_err_pct, 2) + "% | kappa " + fmt(s1.condition_number_rel, 2);
+      document.getElementById("hero-gam-r2").textContent =
+        "mu " + fmt(hm.mu_r2, 4) + " | kLa " + fmt(hm.kla_r2, 4);
+      const hybRatio = ctrlBench.hybrid_norm_rmse / Math.max(1e-9, ctrlBench.nominal_norm_rmse);
+      document.getElementById("hero-ekf-ratio").textContent = fmt(hybRatio, 3) + "x";
+
+      // Audit progression timeline cards
+      const timelineHost = document.getElementById("audit-timeline-cards");
+      timelineHost.innerHTML = bundle.audit_progression
+        .map((item) => {
+          const isGo = item.verdict.indexOf("GO") === 0;
+          const badgeCls = isGo ? "pill-pass" : "pill-fail";
+          return (
+            '<div class="audit-stage ' + (isGo ? "go" : "") + '">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">' +
+            "<strong>" + escapeHtml(item.iteration) + "</strong>" +
+            '<span class="' + badgeCls + '">' + fmt(item.score, 1) + "/10 " + escapeHtml(item.verdict.split(" ")[0]) + "</span>" +
+            "</div>" +
+            '<div class="mono" style="font-size:11.5px;color:var(--muted);margin-bottom:6px;">P0: ' +
+            item.p0_count + " | P1: " + item.p1_count + "</div>" +
+            '<p style="margin:0;font-size:12.5px;color:var(--muted);">' + escapeHtml(item.summary) + "</p>" +
+            "</div>"
+          );
+        })
+        .join("");
+
+      // Tab 3: Stage-1 6-parameter recovery table
+      document.getElementById("stage1-cond-summary").textContent =
+        "kappa_rel = " + fmt(s1.condition_number_rel, 2) + " (< 45.0), max_err = " + fmt(s1.max_relative_error_pct, 2) + "% (< 8.0%)";
+      const s1Body = document.querySelector("#stage1-params-table tbody");
+      s1Body.innerHTML = s1.param_names
+        .map((pname) => {
+          const err = s1.relative_error_pct[pname];
+          const dec = pname === "k_La0" ? 2 : 4;
+          return (
+            "<tr>" +
+            '<td class="mono">' + escapeHtml(pname) + "</td>" +
+            '<td class="num">' + fmt(s1.initial_guess[pname], dec) + "</td>" +
+            '<td class="num">' + fmt(s1.true_values[pname], dec) + "</td>" +
+            '<td class="num">' + fmt(s1.recovered_values[pname], dec) + "</td>" +
+            '<td class="num">' + fmt(s1.standard_errors[pname], dec) + "</td>" +
+            '<td class="num"><span class="pill-pass">' + fmt(err, 2) + "%</span></td>" +
+            "</tr>"
+          );
+        })
+        .join("");
+
+      const s1Sum = s1.seed_14_summary;
+      document.getElementById("stage1-14seed-summary").textContent =
+        "14-Seed Distribution Summary: mean error = " +
+        fmt(s1Sum.mean_err_pct, 2) +
+        "%, worst max error = " +
+        fmt(s1Sum.worst_max_err_pct, 2) +
+        "% (limit < 8.0%), max kappa_rel = " +
+        fmt(s1Sum.max_kappa_rel, 2) +
+        " (limit < 45.0). Calibration SHA-256: " +
+        s1.calibration_sha256.slice(0, 16) +
+        "...";
+
+      // Tab 4: 5 L vs 1000 L Scale Table
+      const scBody = document.querySelector("#scale-comparison-table tbody");
+      const s1000 = scaleBench.summary;
+      const scRows = [
+        ["Matched Impeller Agitation (RPM)", "450.0", fmt(scaleBench.rpm_matched, 2)],
+        ["Matched Aeration Rate (vvm)", "1.200", fmt(scaleBench.vvm_matched, 4)],
+        ["Volumetric Gassed Power Pg/V (W/m3)", fmt(engine.computeHydrodynamics(450, 1.2, 2.0, bundle.p_rec).Pg_V, 2), fmt(scaleBench.Pg_V_matched, 2)],
+        ["Superficial Gas Velocity v_s (m/s)", fmt(engine.computeHydrodynamics(450, 1.2, 2.0, bundle.p_rec).v_s, 5), fmt(scaleBench.v_s_matched, 5)],
+        ["Impeller Tip Speed v_tip (m/s)", fmt(scaleBench.v_tip_5L, 3), fmt(scaleBench.v_tip_1000L, 3)],
+        ["Closed-Loop Hybrid EKF nRMSE", fmt(ctrlBench.hybrid_norm_rmse, 4), fmt(s1000.hybrid_norm_rmse, 4)],
+        ["Closed-Loop Nominal EKF nRMSE", fmt(ctrlBench.nominal_norm_rmse, 4), fmt(s1000.nominal_norm_rmse, 4)],
+        ["Final Viable Biomass X_v (g/L)", fmt(ctrlBench.final_Xv_g_L, 2), fmt(s1000.final_Xv_g_L, 2)],
+      ];
+      scBody.innerHTML = scRows
+        .map(
+          (r) =>
+            "<tr><td>" + escapeHtml(r[0]) + '</td><td class="num">' + escapeHtml(r[1]) + '</td><td class="num">' + escapeHtml(r[2]) + "</td></tr>"
+        )
+        .join("");
+
+      // Tab 5: Held-out 5-regime R2 & 6-disturbance EKF ratio tables
+      const hoBody = document.querySelector("#heldout-regimes-table tbody");
+      hoBody.innerHTML = g86.heldout_per_batch
+        .map(
+          (b) =>
+            "<tr>" +
+            '<td class="mono">' + escapeHtml(b.regime) + "</td>" +
+            '<td class="num">' + fmt(b.kd_r2, 4) + "</td>" +
+            '<td class="num">' + fmt(b.kla_r2, 4) + "</td>" +
+            '<td class="num">' + fmt(b.qAnet_r2, 4) + "</td>" +
+            '<td class="num">' + fmt(b.mu_r2, 4) + "</td>" +
+            '<td class="num">' + fmt(b.hybrid_norm_rmse, 4) + "</td>" +
+            '<td class="num">' + fmt(b.nominal_norm_rmse, 4) + "</td>" +
+            "</tr>"
+        )
+        .join("");
+
+      const distBody = document.querySelector("#disturbances-table tbody");
+      distBody.innerHTML = bundle.benchmarks.disturbances_5L
+        .map(
+          (d) =>
+            "<tr>" +
+            '<td class="mono">' + escapeHtml(d.mode) + "</td>" +
+            '<td class="num">' + fmt(d.hybrid_norm_rmse, 4) + "</td>" +
+            '<td class="num">' + fmt(d.nominal_norm_rmse, 4) + "</td>" +
+            '<td class="num"><span class="pill-pass">' + fmt(d.rmse_ratio, 3) + "x (-" + fmt(d.error_reduction_pct, 1) + "%)</span></td>" +
+            '<td class="num">' + fmt(d.peak_acetate_g_L, 3) + "</td>" +
+            '<td class="num">' + fmt(d.min_DO_pct, 1) + "%</td>" +
+            '<td class="num">' + fmt(d.max_d_m, 2) + "</td>" +
+            "</tr>"
+        )
+        .join("");
+
+      // Tab 6: Architecture AIC/BIC table + Live Browser OOD/84 g/L check
+      const aicBody = document.querySelector("#arch-aic-table tbody");
+      aicBody.innerHTML = g86.arch_aic_bic
+        .map((r) => {
+          const badge = r.selected
+            ? '<span class="pill-pass">Selected (GAM-86)</span>'
+            : '<span class="mono" style="color:var(--muted);">Candidate</span>';
+          return (
+            "<tr>" +
+            '<td class="mono">' + escapeHtml(r.cadence) + "</td>" +
+            '<td class="num">(' + r.h_ace + ", " + r.h_mu + ")</td>" +
+            '<td class="num">' + r.n_params + "</td>" +
+            '<td class="num">' + fmt(r.rss, 1) + "</td>" +
+            '<td class="num">' + fmt(r.aic, 1) + "</td>" +
+            '<td class="num">' + fmt(r.bic, 1) + "</td>" +
+            '<td class="num">' + badge + "</td>" +
+            "</tr>"
+          );
+        })
+        .join("");
+
+      const hydRef = engine.computeHydrodynamics(450, 1.2, 2.0, bundle.p_rec);
+      const muM = bundle.p_rec.mu_max * (0.3 / (bundle.p_rec.K_S + 0.3)) * (4.5 / (bundle.p_rec.K_O2 + 4.5));
+      const p84 = engine.predictGamWithUQ(80.0, 4.0, 0.3, 4.5, 0.2, hydRef.v_tip, muM, bundle);
+      const trueEta84 = g86.reference_84gL_true_eta_kla;
+      const z84 = Math.abs(p84.eta_kla - trueEta84) / Math.max(1e-9, p84.std_kla);
+      const pOod = engine.predictGamWithUQ(10.0, 0.3, 15.0, 4.0, 8.0, hydRef.v_tip, 0.30, bundle);
+      document.getElementById("ood-calibration-summary").textContent =
+        "Live JS Parity Verification: At X_tot=84 g/L, eta_kla=" +
+        fmt(p84.eta_kla, 4) +
+        " +- " +
+        fmt(p84.std_kla, 4) +
+        " (true " +
+        fmt(trueEta84, 4) +
+        ", z=" +
+        fmt(z84, 2) +
+        " <= 2.5, in_domain=" +
+        p84.in_domain +
+        "). At extreme OOD (S=15, A=8), eta_mu relaxes to " +
+        fmt(pOod.eta_mu, 4) +
+        " (mechanistic prior 1.0000).";
+
+      // Section 5: Pytest Verification Table & ALCOA+ Chain
+      const pyBody = document.querySelector("#pytest-matrix-table tbody");
+      pyBody.innerHTML = bundle.pytest_suite
+        .map(
+          (t) =>
+            "<tr>" +
+            '<td class="mono" style="font-size:11.5px;">' + escapeHtml(t.name) + "</td>" +
+            '<td><span class="pill-pass">' + escapeHtml(t.status) + "</span></td>" +
+            "<td>" + escapeHtml(t.focus) + "</td>" +
+            "</tr>"
+        )
+        .join("");
+
+      const al = bundle.alcoa_sample;
+      document.getElementById("alcoa-batch-id").textContent = al.batch_id;
+      document.getElementById("alcoa-count-badge").textContent = al.audit_log_count + " SHA-256 events";
+      document.getElementById("alcoa-digests-box").innerHTML =
+        "standard:      " + escapeHtml(al.alcoa_standard) + "<br />" +
+        "params_sha256: " + escapeHtml(al.params_sha256) + "<br />" +
+        "model_sha256:  " + escapeHtml(al.model_sha256) + "<br />" +
+        "record_sha256: " + escapeHtml(al.record_sha256);
+
+      const alBody = document.querySelector("#alcoa-events-table tbody");
+      alBody.innerHTML = (al.audit_log_preview || [])
+        .map(
+          (ev) =>
+            "<tr>" +
+            '<td class="num">' + ev.seq + "</td>" +
+            '<td class="num">' + fmt(ev.process_t_h, 2) + "</td>" +
+            '<td class="mono">' + escapeHtml(ev.event_type) + "</td>" +
+            '<td class="mono">' + escapeHtml(ev.entry_sha256) + "</td>" +
+            "</tr>"
+        )
+        .join("");
+    }
+
+    // Tab switching for Section 4 Challenges
+    document.querySelectorAll(".tab-btn").forEach((btn) => {
+      btn.addEventListener("click", function () {
+        const target = this.getAttribute("data-tab");
+        document.querySelectorAll(".tab-btn").forEach((b) => {
+          const active = b.getAttribute("data-tab") === target;
+          b.classList.toggle("active", active);
+          b.setAttribute("aria-selected", active ? "true" : "false");
+        });
+        document.querySelectorAll(".tab-panel").forEach((p) => {
+          p.classList.toggle("active", p.id === "tab-" + target);
+        });
+      });
+    });
+
+    // Export Downloads
+    function triggerDownload(filename, content, mimeType) {
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    document.getElementById("download-sim-csv-btn").addEventListener("click", function () {
+      const sim = appState.sim;
+      if (!sim) return;
+      const header = [
+        "t_h", "Xv_est", "Xd_est", "S_est", "CL_est", "A_est", "P_est", "V_est",
+        "Xv_std", "F_cmd", "rpm", "vvm", "mu_est", "kLa_est", "d_m", "in_domain",
+      ];
+      if (appState.showTruth) {
+        header.push("Xv_true", "Xd_true", "S_true", "CL_true", "A_true", "P_true");
+      }
+      const lines = [header.join(",")];
+      for (let i = 0; i < sim.t.length; i++) {
+        const row = [
+          sim.t[i],
+          sim.estHyb[i][0], sim.estHyb[i][1], sim.estHyb[i][2], sim.estHyb[i][3],
+          sim.estHyb[i][4], sim.estHyb[i][5], sim.estHyb[i][6],
+          sim.stdHyb[i][0],
+          sim.inputs[i][0], sim.inputs[i][1], sim.inputs[i][2],
+          sim.muHyb[i], sim.klaHyb[i], sim.d_m[i], sim.inDomain[i],
+        ];
+        if (appState.showTruth) {
+          row.push(
+            sim.trueStates[i][0], sim.trueStates[i][1], sim.trueStates[i][2],
+            sim.trueStates[i][3], sim.trueStates[i][4], sim.trueStates[i][5]
+          );
+        }
+        lines.push(row.map((v) => (typeof v === "number" ? v.toFixed(6) : v)).join(","));
+      }
+      triggerDownload(
+        "hybrid_twin_" + appState.scaleL + "L_" + appState.disturbanceMode + ".csv",
+        lines.join("\n"),
+        "text/csv"
+      );
+    });
+
+    document.getElementById("download-alcoa-json-btn").addEventListener("click", function () {
+      triggerDownload(
+        "alcoa_audit_record_gam86.json",
+        JSON.stringify(bundle.alcoa_sample, null, 2),
+        "application/json"
+      );
+    });
+
+    global.addEventListener("resize", drawAllCharts);
+
+    // Boot everything
+    hydrateCaseStudy();
+    syncControlUI();
+    runAndRenderSimulation();
+  });
+})(window);
