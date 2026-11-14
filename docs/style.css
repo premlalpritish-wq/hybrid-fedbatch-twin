@@ -112,12 +112,37 @@ a:hover {
   border: 0;
 }
 
+img,
+svg,
+canvas {
+  max-width: 100%;
+}
+
+code {
+  overflow-wrap: anywhere;
+}
+
+.panel,
+.card,
+.chart-card,
+.metric-chip,
+.kpi-card,
+.audit-stage,
+.arch-node,
+.tab-panel,
+.table-scroll,
+.chart-canvas-host,
+.reactor-viewport-wrap {
+  min-width: 0;
+  max-width: 100%;
+}
+
 /* Sticky Instrumentation Topbar */
 .topbar {
   position: sticky;
   top: 0;
   z-index: 40;
-  height: var(--topbar-h);
+  min-height: var(--topbar-h);
   background: var(--bg);
   border-bottom: 1px solid var(--line);
 }
@@ -125,8 +150,8 @@ a:hover {
 .topbar-inner {
   max-width: 1380px;
   margin: 0 auto;
-  height: 100%;
-  padding: 0 20px;
+  min-height: var(--topbar-h);
+  padding: 6px 20px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -461,10 +486,11 @@ a:hover {
   left: 10px;
   right: 10px;
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: flex-start;
   pointer-events: none;
-  gap: 8px;
+  gap: 6px;
 }
 
 .reactor-hud-bottom {
@@ -537,9 +563,10 @@ html[data-theme="light"] .hud-pill {
 
 .slider-label-line {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: baseline;
-  gap: 8px;
+  gap: 6px 8px;
   font-size: 12.5px;
 }
 
@@ -700,9 +727,10 @@ select.ctrl-select {
 
 .chart-card-head {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: baseline;
-  gap: 8px;
+  gap: 4px 8px;
   margin-bottom: 6px;
 }
 
@@ -754,6 +782,8 @@ select.ctrl-select {
   font-size: 12.5px;
   line-height: 1.65;
   overflow-x: auto;
+  overflow-wrap: anywhere;
+  max-width: 100%;
   margin: 10px 0;
 }
 
@@ -951,7 +981,7 @@ table.data-table th.num {
 /* Responsive Breakpoints (375px mobile -> 1440px desktop, zero horizontal overflow) */
 @media (max-width: 1120px) {
   .twin-console {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .hero-metrics {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -967,7 +997,7 @@ table.data-table th.num {
   .three-col,
   .audit-timeline,
   .arch-diagram {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .arch-arrow {
     transform: rotate(90deg);
@@ -980,19 +1010,47 @@ table.data-table th.num {
   }
 }
 
-@media (max-width: 480px) {
+@media (max-width: 560px) {
   .page-wrap {
     padding: 16px 12px 48px;
   }
   .topbar-inner {
-    padding: 0 12px;
+    padding: 8px 12px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .brand {
+    font-size: 13px;
+    gap: 7px;
+  }
+  .topbar-actions {
+    gap: 6px;
+    margin-left: auto;
+    flex-wrap: wrap;
+    max-width: 100%;
+  }
+  .topbar-actions .btn {
+    padding: 6px 9px;
+    font-size: 12px;
+    min-height: 32px;
   }
   .status-pill {
     display: none;
   }
+  .seg-group {
+    display: flex;
+    flex-wrap: wrap;
+    width: 100%;
+  }
+  .seg-btn {
+    flex: 1 1 auto;
+    text-align: center;
+    padding: 7px 10px;
+    font-size: 12px;
+  }
   .hero-metrics,
   .kpi-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .reactor-viewport-wrap {
     height: 290px;

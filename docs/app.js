@@ -1107,6 +1107,12 @@
     });
 
     global.addEventListener("resize", drawAllCharts);
+    if (global.ResizeObserver) {
+      const chartsGrid = document.querySelector(".charts-grid");
+      if (chartsGrid) {
+        new ResizeObserver(drawAllCharts).observe(chartsGrid);
+      }
+    }
 
     // Boot everything
     hydrateCaseStudy();
