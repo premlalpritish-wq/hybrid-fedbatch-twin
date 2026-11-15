@@ -36,6 +36,7 @@
         <a href="#sec-audit">3. PI Audit</a>
         <a href="#sec-scaleup">4. Scale-Up</a>
         <a href="#sec-workbench">5. Twin Workbench</a>
+        <a href="#sec-wetlab">6. Wet-Lab CHO-K1</a>
         <a
           class="mobile-nav-github"
           href="https://github.com/premlalpritish-wq/hybrid-fedbatch-twin"
@@ -139,6 +140,7 @@
           <li><a href="#sec-audit" class="toc-link" data-toc="sec-audit">3. Literature-Grounded Verification</a></li>
           <li><a href="#sec-scaleup" class="toc-link" data-toc="sec-scaleup">4. Geometric Scale-Up</a></li>
           <li><a href="#sec-workbench" class="toc-link" data-toc="sec-workbench">5. Live Twin Workbench</a></li>
+          <li><a href="#sec-wetlab" class="toc-link" data-toc="sec-wetlab">6. Wet-Lab Validation (CHO-K1)</a></li>
           <li><a href="#alcoa-provenance" class="toc-link" data-toc="alcoa-provenance">Appendix: ALCOA+ &amp; Tests</a></li>
         </ul>
       </nav>
@@ -1133,6 +1135,169 @@
       </section>
 
       <!-- ===================================================================== -->
+      <!-- SECTION 6: EMPIRICAL WET-LAB VALIDATION (UHLENDORFF ET AL. 2026)      -->
+      <!-- ===================================================================== -->
+      <section id="sec-wetlab" class="chapter-section chapter-wide">
+        <div class="chapter-kicker">Section 06</div>
+        <h2 class="chapter-title">Empirical Wet-Lab Validation &amp; Adversarial Stress Test (Uhlendorff et al., 2026 CHO-K1)</h2>
+        <p class="prose-inline">
+          Synthetic benchmarks cannot prove robustness against real mammalian bioreactor noise, missing PAT windows, or
+          campaign-to-campaign preculture shifts. We therefore subjected <code>hybrid-fedbatch-twin</code> to an adversarial
+          wet-lab gauntlet on the public <strong>Uhlendorff et al. (2026) CHO-K1 dataset</strong> (<code>10.5281/zenodo.20829178</code>:
+          12 campaigns, 24 vessels, 48 inline/offline CSVs), refereed head-to-head by the parsimonious
+          <code>@von_stosch_twin</code> (OLS-ERR + BIC + OOB bagging) benchmark.
+        </p>
+
+        <div class="two-col" style="margin-top: 18px;">
+          <!-- 6.1 Wet-Lab Gauntlet & Duplicate Noise Floor -->
+          <div class="panel">
+            <div class="panel-header">
+              <h3 class="panel-title">6.1 Wet-Lab Gauntlet &amp; Duplicate Noise Floor (<span data-katex="\Sigma_y">Sigma_y</span>)</h3>
+              <span class="mono">Zero Replicate Leakage</span>
+            </div>
+            <p class="prose-inline">
+              Biological duplicates (<code>R01</code> and <code>R02</code> of each <code>EXP</code>) are strictly locked inside the same
+              partition: <strong>9 Dev Campaigns</strong> (<code>EXP001</code>&ndash;<code>EXP007</code>, <code>EXP010</code>, <code>EXP011</code>; 18 runs)
+              vs. <strong>3 Held-Out Test Campaigns</strong> (<code>EXP008</code>, <code>EXP009</code>, <code>EXP012</code>; 6 runs). Across 378 offline vectors,
+              28 rows have incomplete causal <span data-katex="[t - 0.5\text{ h},\, t]">[t - 0.5h, t]</span> 7-sensor PAT windows, and
+              <code>EXP011_R02</code> contains 4 catastrophic assay-fault rows (<span data-katex="\text{VCD}=0,\ \text{Amm}=48.93\text{ mM}">VCD=0, Amm=48.93 mM</span>).
+            </p>
+            <div class="table-scroll" style="margin-top: 10px;">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>State</th>
+                    <th class="num">Clean <span data-katex="\Sigma_y">Sigma_y</span></th>
+                    <th class="num">Unmasked <span data-katex="\Sigma_y">Sigma_y</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td>VCD (10<sup>6</sup> cells/mL)</td><td class="num">1.4080</td><td class="num">1.4724</td></tr>
+                  <tr><td>Glucose (g/L)</td><td class="num">0.2906</td><td class="num">0.4911</td></tr>
+                  <tr><td>Lactate (g/L)</td><td class="num">0.3334</td><td class="num">1.2153</td></tr>
+                  <tr><td>Ammonium (mM)</td><td class="num">0.6214</td><td class="num">4.3243</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 6.2 Macroscopic Mass-Balance Closure -->
+          <div class="panel">
+            <div class="panel-header">
+              <h3 class="panel-title">6.2 Mass-Balance Closure: The Sampling Withdrawal Trap</h3>
+              <span class="mono">EXP010 &amp; EXP012</span>
+            </div>
+            <p class="prose-inline">
+              In <code>EXP010</code>, cumulative feed reaches <code>857.27 g</code> (<code>+0.9317 L</code>), yet inline
+              <code>Liquid volume (L)</code> rises only from <code>0.5450 L</code> to <code>0.6468 L</code> because 22 offline samples
+              withdraw <code>-0.8192 L</code>. Sampling removes broth at reactor concentration <span data-katex="\mathbf{x}(t)">x(t)</span>
+              without diluting it; only incoming feed dilutes via <span data-katex="D(t) = F_{\text{in}}(t)/V_{\text{true}}(t)">D(t) = F_in(t)/V_true(t)</span>.
+              Naive integration <span data-katex="V_0 + m_{\text{feed}}/1000 = 1.402\text{ L}">V0 + m_feed/1000 = 1.402 L</span>
+              under-estimated dilution by &gt;2x; closing <span data-katex="V_{\text{true}}(t)">V_true(t)</span> and calibrating
+              <span data-katex="c_{\text{Glc,feed}} = 18.0\text{ g/L}">c_Glc,feed = 18.0 g/L</span> on Dev dropped Dev WMSE from
+              <code>24.991</code> to <code>8.763</code> (Dev VCD <span data-katex="R^2 = +0.588">R2 = +0.588</span>, Glc <span data-katex="R^2 = +0.891">R2 = +0.891</span>).
+            </p>
+            <div class="chart-canvas-host" style="height: 195px; margin-top: 8px;">
+              <canvas id="chart-wetlab-volume" aria-label="EXP010 naive vs true liquid volume mass-balance closure"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- 6.3 Before vs After Adversarial Remediation Table -->
+        <div class="panel" style="margin-top: 16px;">
+          <div class="panel-header">
+            <h3 class="panel-title">6.3 Adversarial Remediation (5.93/10 NO-GO &rarr; 8.60/10 GO)</h3>
+            <span class="mark-pass">REMEDIATED VERDICT: 8.60 / 10.00 GO</span>
+          </div>
+          <p class="prose-inline">
+            Pruning <span data-katex="K_{\text{eff}}">K_eff</span> from 47 (<span data-katex="\gamma_{\text{col}} = 474,808.8">gamma_col = 474,808.8</span>)
+            to 9 decoupled parameters (<span data-katex="\gamma_{\text{col}} = 15.09 &lt; 20">gamma_col = 15.09 &lt; 20</span>), embedding a
+            Huber (<span data-katex="\delta = 3.0\,\Sigma_y">delta = 3.0 Sigma_y</span>) biophysical anomaly gate, and stratifying the
+            <span data-katex="B=15">B=15</span> bootstrap with OOB variance calibration resolved collinearity and outlier collapse.
+            Honest physical ceiling: open-loop held-out VCD <span data-katex="R^2">R2</span> remains negative on unseen campaigns
+            (<code>-1.335</code> vs. <code>-0.741</code> for <code>@von_stosch_twin</code>) due to unmeasured preculture lag, which is
+            resolved only when closing the loop with inline PAT via the Pad&eacute; EKF (<code>1.784 &times; 10^6 cells/mL</code>).
+          </p>
+          <div class="table-scroll" style="margin-top: 10px;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Stress-Test Metric (Held-Out: EXP008, EXP009, EXP012)</th>
+                  <th class="num">Unremediated</th>
+                  <th class="num">Remediated + Mass-Balance</th>
+                  <th class="num">@von_stosch_twin Referee</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td>Active Parameters <span data-katex="K_{\text{eff}}">K_eff</span> / Collinearity <span data-katex="\gamma_{\text{col}}">gamma_col</span></td><td class="num">47 / 474,808.8 (FAIL)</td><td class="num"><strong>9 / 15.09 (PASS)</strong></td><td class="num">9 / 38.78 (ODE) &middot; 3.14 (ERR)</td></tr>
+                <tr><td>Pooled Held-Out Test WMSE</td><td class="num">29.5217</td><td class="num"><strong>23.3983</strong></td><td class="num">19.4831</td></tr>
+                <tr><td>Open-Loop Held-Out VCD RMSE / <span data-katex="R^2">R2</span></td><td class="num">3.606 / -1.440</td><td class="num">3.528 / -1.335</td><td class="num">3.046 / -0.741</td></tr>
+                <tr><td>Open-Loop Held-Out Glc RMSE / <span data-katex="R^2">R2</span></td><td class="num">2.355 / 0.235</td><td class="num"><strong>1.799 / 0.554</strong></td><td class="num">1.666 / 0.617</td></tr>
+                <tr><td>Open-Loop Held-Out Lac RMSE / <span data-katex="R^2">R2</span></td><td class="num">1.805 / 0.450</td><td class="num">2.107 / 0.250</td><td class="num">1.781 / 0.464</td></tr>
+                <tr><td>Open-Loop Held-Out Amm RMSE / <span data-katex="R^2">R2</span></td><td class="num">2.526 / 0.523</td><td class="num"><strong>1.868 / 0.740</strong></td><td class="num">2.137 / 0.659</td></tr>
+                <tr><td>Fed-Batch <code>EXP012</code> WMSE / <code>EXP009</code> Shift WMSE</td><td class="num">68.0246 / 10.1332</td><td class="num"><strong>51.6351 / 10.0110</strong></td><td class="num">39.2806 / 11.1593</td></tr>
+                <tr><td><code>EXP011_R02</code> Unmasked WMSE Degradation</td><td class="num">+12.3523</td><td class="num"><strong>+0.7842</strong></td><td class="num">&mdash;</td></tr>
+                <tr><td>Epistemic 95% CI Coverage (vs Test Obs)</td><td class="num">54.69%</td><td class="num"><strong>80.21%</strong></td><td class="num">29.95%</td></tr>
+                <tr><td>Closed-Loop Pad&eacute; EKF Test VCD RMSE (38 Dropouts, 0 NaNs)</td><td class="num">1.761 &times; 10<sup>6</sup>/mL</td><td class="num"><strong>1.776 &times; 10<sup>6</sup>/mL</strong></td><td class="num">&mdash;</td></tr>
+                <tr><td><strong>@von_stosch_twin Survival Verdict (0&ndash;10)</strong></td><td class="num">5.93 / 10 (NO-GO)</td><td class="num"><strong>8.60 / 10 (GO)</strong></td><td class="num">Reference</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 6.4 Interactive Wet-Lab Trajectory Explorer -->
+        <div class="panel" style="margin-top: 16px;">
+          <div class="panel-header" style="flex-wrap: wrap; gap: 10px;">
+            <div>
+              <h3 class="panel-title">6.4 Interactive Wet-Lab Trajectory Explorer (Held-Out Test Campaigns)</h3>
+              <span class="mono" id="wetlab-campaign-subtitle">EXP008 (Batch) &middot; Open-Loop B=15 95% CI vs. Closed-Loop Pad&eacute; EKF + Causal PAT</span>
+            </div>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;" role="group" aria-label="Select held-out campaign">
+              <button type="button" class="btn btn-primary wetlab-exp-btn" data-wetlab-exp="EXP008">EXP008 (Batch)</button>
+              <button type="button" class="btn wetlab-exp-btn" data-wetlab-exp="EXP009">EXP009 (Shifted Batch)</button>
+              <button type="button" class="btn wetlab-exp-btn" data-wetlab-exp="EXP012">EXP012 (Fed-Batch t=48h)</button>
+            </div>
+          </div>
+          <p class="prose-inline" style="margin-bottom: 12px;">
+            Toggle across the 3 held-out test campaigns. On <strong>VCD</strong>, open-loop ODEs miss unseen campaign lag shifts
+            (<code>RMSE = 3.528</code>), whereas the <strong>Closed-Loop Pad&eacute; EKF + Causal Dielectric Permittivity (<span data-katex="\Delta\varepsilon">DeltaEps</span>) &amp; Turbidity PAT</strong>
+            tracks the true biomass trajectory (<code>RMSE = 1.776 &times; 10^6 cells/mL</code>, within <code>1.26x</code> of the duplicate noise floor
+            <code>1.408</code>) through 38 real inline sensor dropout windows (marked along the time axis).
+          </p>
+          <div class="two-col">
+            <div class="chart-card">
+              <div class="chart-card-head">
+                <h3>Viable Cell Density (VCD, 10<sup>6</sup> cells/mL)</h3>
+                <span class="chart-readout" id="wetlab-readout-vcd">Pad&eacute; EKF RMSE: 1.776</span>
+              </div>
+              <div class="chart-canvas-host"><canvas id="chart-wetlab-vcd" aria-label="Held-out VCD trajectory comparison"></canvas></div>
+            </div>
+            <div class="chart-card">
+              <div class="chart-card-head">
+                <h3>Glucose (g/L)</h3>
+                <span class="chart-readout" id="wetlab-readout-glc">Test R2: 0.554</span>
+              </div>
+              <div class="chart-canvas-host"><canvas id="chart-wetlab-glc" aria-label="Held-out Glucose trajectory comparison"></canvas></div>
+            </div>
+            <div class="chart-card">
+              <div class="chart-card-head">
+                <h3>Lactate (g/L)</h3>
+                <span class="chart-readout" id="wetlab-readout-lac">Test R2: 0.250</span>
+              </div>
+              <div class="chart-canvas-host"><canvas id="chart-wetlab-lac" aria-label="Held-out Lactate trajectory comparison"></canvas></div>
+            </div>
+            <div class="chart-card">
+              <div class="chart-card-head">
+                <h3>Ammonium (mM)</h3>
+                <span class="chart-readout" id="wetlab-readout-amm">Test R2: 0.740</span>
+              </div>
+              <div class="chart-canvas-host"><canvas id="chart-wetlab-amm" aria-label="Held-out Ammonium trajectory comparison"></canvas></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===================================================================== -->
       <!-- APPENDIX: VERIFICATION MATRIX & ALCOA+ PROVENANCE                     -->
       <!-- ===================================================================== -->
       <section id="alcoa-provenance" class="chapter-section chapter-wide">
@@ -1222,6 +1387,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" defer></script>
   <script src="assets/twin_bundle.js" defer></script>
+  <script src="assets/uhlendorff_2026_validation.js" defer></script>
   <script src="twin_engine.js" defer></script>
   <script
     src="https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js"

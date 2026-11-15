@@ -2397,11 +2397,239 @@
       drawScaleupExplorer();
     }
 
+    // =========================================================================
+    // SECTION 6: WET-LAB CHO-K1 VALIDATION & TRAJECTORY EXPLORER
+    // =========================================================================
+    function drawWetlabVolumeChart() {
+      const cv = document.getElementById("chart-wetlab-volume");
+      const val = global.UHLENDORFF_2026_VALIDATION;
+      if (!cv || !val || !val.mass_balance_discovery || !val.mass_balance_discovery.volume_series) return;
+      const d = val.mass_balance_discovery.volume_series.EXP010;
+      if (!d) return;
+
+      const { ctx, w, h } = setupHiDpiCanvas(cv);
+      if (!w || !h) return;
+      const theme = getThemeColors();
+      ctx.clearRect(0, 0, w, h);
+
+      const pad = { l: 48, r: 16, t: 22, b: 30 };
+      const pw = w - pad.l - pad.r;
+      const ph = h - pad.t - pad.b;
+      const tMax = d.t[d.t.length - 1];
+      const yMin = 0.4, yMax = 1.5;
+      const xOf = (t) => pad.l + (t / tMax) * pw;
+      const yOf = (v) => pad.t + ph - ((v - yMin) / (yMax - yMin)) * ph;
+
+      ctx.strokeStyle = theme.grid;
+      ctx.lineWidth = 1;
+      [0.5, 0.8, 1.1, 1.4].forEach((yv) => {
+        const y = yOf(yv);
+        ctx.beginPath();
+        ctx.moveTo(pad.l, y);
+        ctx.lineTo(w - pad.r, y);
+        ctx.stroke();
+        ctx.fillStyle = theme.axis;
+        ctx.font = "10px 'IBM Plex Mono', monospace";
+        ctx.textAlign = "right";
+        ctx.fillText(yv.toFixed(1) + "L", pad.l - 6, y + 3);
+      });
+
+      // Naive volume
+      ctx.strokeStyle = "#dc2626";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      d.t.forEach((t, i) => (i === 0 ? ctx.moveTo(xOf(t), yOf(d.v_naive[i])) : ctx.lineTo(xOf(t), yOf(d.v_naive[i]))));
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // True inline volume
+      ctx.strokeStyle = "#0f766e";
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      d.t.forEach((t, i) => (i === 0 ? ctx.moveTo(xOf(t), yOf(d.v_true[i])) : ctx.lineTo(xOf(t), yOf(d.v_true[i]))));
+      ctx.stroke();
+
+      ctx.font = "11px 'IBM Plex Sans', sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillStyle = "#dc2626";
+      ctx.fillText("Naive V0 + m_feed/1000 (1.402 L)", pad.l + 6, pad.t + 12);
+      ctx.fillStyle = "#0f766e";
+      ctx.fillText("True Inline Volume (0.647 L)", pad.l + 6, pad.t + 26);
+    }
+
+    function drawWetlabStateCanvas(canvasId, expId, stateIdx) {
+      const cv = document.getElementById(canvasId);
+      const val = global.UHLENDORFF_2026_VALIDATION;
+      if (!cv || !val || !val.held_out_trajectories) return;
+      const tr = val.held_out_trajectories[expId];
+      if (!tr) return;
+
+      const { ctx, w, h } = setupHiDpiCanvas(cv);
+      if (!w || !h) return;
+      const theme = getThemeColors();
+      ctx.clearRect(0, 0, w, h);
+
+      const pad = { l: 44, r: 16, t: 24, b: 30 };
+      const pw = w - pad.l - pad.r;
+      const ph = h - pad.t - pad.b;
+
+      const r1Vals = tr.obs_r01.map((row) => row[stateIdx]);
+      const r2Vals = tr.obs_r02.map((row) => row[stateIdx]);
+      const htMean = tr.ht_mean.map((row) => row[stateIdx]);
+      const htUpper = tr.ht_mean.map((row, i) => row[stateIdx] + 1.96 * tr.ht_std[i][stateIdx]);
+      const htLower = tr.ht_mean.map((row, i) => Math.max(0, row[stateIdx] - 1.96 * tr.ht_std[i][stateIdx]));
+      const vsMean = tr.vs_mean.map((row) => row[stateIdx]);
+      const ekfVals = stateIdx === 0 && tr.ekf_r01 ? tr.ekf_r01.vcd : [];
+
+      const tMax = Math.max(tr.t_off_r01[tr.t_off_r01.length - 1], tr.t_off_r02[tr.t_off_r02.length - 1]);
+      const yMax = Math.max(1e-3, ...r1Vals, ...r2Vals, ...htUpper, ...vsMean, ...ekfVals) * 1.12;
+      const xOf = (t) => pad.l + (t / tMax) * pw;
+      const yOf = (v) => pad.t + ph - (v / yMax) * ph;
+
+      // Grid
+      ctx.strokeStyle = theme.grid;
+      ctx.lineWidth = 1;
+      for (let g = 0; g <= 4; g++) {
+        const yv = (yMax * g) / 4;
+        const y = yOf(yv);
+        ctx.beginPath();
+        ctx.moveTo(pad.l, y);
+        ctx.lineTo(w - pad.r, y);
+        ctx.stroke();
+        ctx.fillStyle = theme.axis;
+        ctx.font = "10px 'IBM Plex Mono', monospace";
+        ctx.textAlign = "right";
+        ctx.fillText(yv.toFixed(1), pad.l - 6, y + 3);
+      }
+
+      // Feed start line if fed-batch
+      if (tr.t_feed_start !== null && tr.t_feed_start < tMax) {
+        const xf = xOf(tr.t_feed_start);
+        ctx.strokeStyle = "rgba(180, 83, 9, 0.45)";
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(xf, pad.t);
+        ctx.lineTo(xf, pad.t + ph);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // 95% CI band
+      ctx.fillStyle = "rgba(37, 99, 235, 0.14)";
+      ctx.beginPath();
+      tr.t_off_r01.forEach((t, i) => (i === 0 ? ctx.moveTo(xOf(t), yOf(htUpper[i])) : ctx.lineTo(xOf(t), yOf(htUpper[i]))));
+      for (let i = tr.t_off_r01.length - 1; i >= 0; i--) {
+        ctx.lineTo(xOf(tr.t_off_r01[i]), yOf(htLower[i]));
+      }
+      ctx.closePath();
+      ctx.fill();
+
+      // @von_stosch_twin baseline
+      ctx.strokeStyle = "#64748b";
+      ctx.lineWidth = 1.6;
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      tr.t_off_r01.forEach((t, i) => (i === 0 ? ctx.moveTo(xOf(t), yOf(vsMean[i])) : ctx.lineTo(xOf(t), yOf(vsMean[i]))));
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Open-loop hybrid-fedbatch-twin mean
+      ctx.strokeStyle = "#2563eb";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      tr.t_off_r01.forEach((t, i) => (i === 0 ? ctx.moveTo(xOf(t), yOf(htMean[i])) : ctx.lineTo(xOf(t), yOf(htMean[i]))));
+      ctx.stroke();
+
+      // Closed-loop Pade EKF on VCD (stateIdx === 0)
+      if (stateIdx === 0 && tr.ekf_r01) {
+        ctx.strokeStyle = "#0f766e";
+        ctx.lineWidth = 2.4;
+        ctx.beginPath();
+        tr.ekf_r01.t.forEach((t, i) => (i === 0 ? ctx.moveTo(xOf(t), yOf(tr.ekf_r01.vcd[i])) : ctx.lineTo(xOf(t), yOf(tr.ekf_r01.vcd[i]))));
+        ctx.stroke();
+
+        // Mark PAT dropout steps along bottom axis
+        ctx.fillStyle = "#d97706";
+        tr.ekf_r01.t.forEach((t, i) => {
+          if (tr.ekf_r01.dropout[i] === 1) {
+            ctx.fillRect(xOf(t) - 1.5, pad.t + ph - 5, 3, 5);
+          }
+        });
+      }
+
+      // Observations R01 & R02
+      const drawDots = (ts, vals, color) => {
+        ctx.fillStyle = color;
+        ts.forEach((t, i) => {
+          ctx.beginPath();
+          ctx.arc(xOf(t), yOf(vals[i]), 3.2, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      };
+      drawDots(tr.t_off_r01, r1Vals, "#111827");
+      drawDots(tr.t_off_r02, r2Vals, "#7c3aed");
+
+      // Legend
+      ctx.font = "10px 'IBM Plex Sans', sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillStyle = "#111827";
+      ctx.fillText("Obs R01/R02", pad.l + 4, pad.t + 10);
+      ctx.fillStyle = "#2563eb";
+      ctx.fillText("Open-Loop HT + 95% CI", pad.l + 72, pad.t + 10);
+      if (stateIdx === 0) {
+        ctx.fillStyle = "#0f766e";
+        ctx.fillText("Pade EKF (PAT)", pad.l + 196, pad.t + 10);
+      } else {
+        ctx.fillStyle = "#64748b";
+        ctx.fillText("@von_stosch_twin", pad.l + 196, pad.t + 10);
+      }
+
+      // X-axis ticks
+      ctx.fillStyle = theme.axis;
+      ctx.font = "10px 'IBM Plex Mono', monospace";
+      ctx.textAlign = "center";
+      [0, Math.round(tMax / 2), Math.round(tMax)].forEach((tv) => {
+        ctx.fillText(tv + "h", xOf(tv), h - 8);
+      });
+    }
+
+    function drawWetlabTrajectories() {
+      const expId = monographState.wetlabExp || "EXP008";
+      drawWetlabVolumeChart();
+      drawWetlabStateCanvas("chart-wetlab-vcd", expId, 0);
+      drawWetlabStateCanvas("chart-wetlab-glc", expId, 1);
+      drawWetlabStateCanvas("chart-wetlab-lac", expId, 2);
+      drawWetlabStateCanvas("chart-wetlab-amm", expId, 3);
+    }
+
+    function bindSection6Wetlab() {
+      monographState.wetlabExp = "EXP008";
+      const btns = document.querySelectorAll(".wetlab-exp-btn");
+      const sub = document.getElementById("wetlab-campaign-subtitle");
+      const labels = {
+        EXP008: "EXP008 (Batch) · Open-Loop B=15 95% CI vs. Closed-Loop Padé EKF + Causal PAT",
+        EXP009: "EXP009 (Shifted Preculture Batch) · Open-Loop B=15 95% CI vs. Closed-Loop Padé EKF + Causal PAT",
+        EXP012: "EXP012 (Fed-Batch t_feed=48h) · Open-Loop B=15 95% CI vs. Closed-Loop Padé EKF + Causal PAT",
+      };
+      btns.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const expId = btn.getAttribute("data-wetlab-exp");
+          monographState.wetlabExp = expId;
+          btns.forEach((b) => b.classList.toggle("btn-primary", b === btn));
+          if (sub && labels[expId]) sub.textContent = labels[expId];
+          drawWetlabTrajectories();
+        });
+      });
+      drawWetlabTrajectories();
+    }
+
     function drawAllMonographCanvases() {
       drawDilemmaCanvas();
       drawPatankarDemo();
       drawAuditCompare();
       drawScaleupExplorer();
+      drawWetlabTrajectories();
     }
 
     appState.monographRedraw = drawAllMonographCanvases;
@@ -2428,6 +2656,7 @@
     bindSection2Explorer();
     bindSection3Audit();
     bindSection4ScaleUp();
+    bindSection6Wetlab();
 
     hydrateCaseStudy();
     syncControlUI();
