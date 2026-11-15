@@ -89,7 +89,7 @@
       theme: localStorage.getItem("hft_theme_v2") || "light",
       scaleL: 5,
       controlMode: "closed_loop",
-      muTarget: 0.28,
+      muTarget: 0.26,
       manualFeedRate: 0.08,
       rpm: 450,
       vvm: 1.2,
@@ -847,7 +847,7 @@
       setPlaying(false);
       appState.controlMode = "closed_loop";
       elCtrlSelect.value = "closed_loop";
-      appState.muTarget = 0.28;
+      appState.muTarget = 0.26;
       appState.disturbanceMode = "none";
       elSelectDist.value = "none";
       if (appState.scaleL === 1000) {
@@ -1852,7 +1852,7 @@
           "All P0/P1 structural defects resolved. VJP continuous sensitivity Jacobians propagate uncertainty cleanly across unobserved <span data-katex=\"X_d\">X_d</span> using Padé(6,6) matrix exponential covariance.",
         fixTitle: "8/8 Contract Suite & Held-Out Benchmark Proof",
         fixHtml:
-          "Held-out <span data-katex=\"R^2(\\mu) = 0.9951\">0.9951</span>, <span data-katex=\"R^2(k_L a) = 0.9699\">0.9699</span>. Error drops <strong>-85.8%</strong> at 5 L and transfers zero-retrain to 1000 L (nRMSE <code>0.0553</code> vs <code>0.3411</code> nominal).",
+          "Held-out <span data-katex=\"R^2(\\mu) = 0.9951\">0.9951</span>, <span data-katex=\"R^2(k_L a) = 0.9699\">0.9699</span>. Aeration-Fault Error Drop: <strong>-85.8% at 5 L</strong> (1000 L nRMSE <code>0.0553</code> vs <code>0.3411</code>).",
       },
     ];
 
