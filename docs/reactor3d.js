@@ -51,6 +51,15 @@
         lastX: 0,
         lastY: 0,
       };
+      this.orbitTarget = {
+        theta: 0.54,
+        phi: 1.24,
+        radius: 8.0,
+        targetY: 0.24,
+      };
+      this.highlightZone = "all";
+      this._highlightPulse = 0.0;
+      this._isVisible = true;
 
       this._rafId = null;
       this._lastTime = performance.now();
@@ -83,6 +92,21 @@
       } else {
         global.addEventListener("resize", () => this._onResize());
       }
+      if (global.IntersectionObserver) {
+        this._io = new IntersectionObserver(
+          (entries) => {
+            const visible = entries.some((entry) => entry.isIntersecting);
+            this._isVisible = visible;
+            if (visible && !this._rafId) {
+              this._lastTime = performance.now();
+              this._loop(this._lastTime);
+            }
+          },
+          { threshold: 0.02 }
+        );
+        this._io.observe(this.container);
+      }
+      this._renderStep(0.016);
       this._loop(performance.now());
     }
 
@@ -494,7 +518,14 @@
       this.root.add(this.shearRing);
 
       // 9. Ring Sparger & Vertical Gas Supply Downcomer
-      const spargerRing = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.028, 12, 36), steel316);
+      this.spargerMat = new THREE.MeshStandardMaterial({
+        color: 0xb8c2cc,
+        metalness: 0.85,
+        roughness: 0.26,
+        emissive: 0x0f766e,
+        emissiveIntensity: 0.0,
+      });
+      const spargerRing = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.028, 12, 36), this.spargerMat);
       spargerRing.rotation.x = Math.PI / 2;
       spargerRing.position.y = this.tankBottomY + 0.22;
       this.root.add(spargerRing);
@@ -508,14 +539,15 @@
       feedCollar.position.set(0.4, headY + 0.09, 0.16);
       this.root.add(feedCollar);
 
-      const feedPipe = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.56, 12), copperFitting);
+      this.feedPipeMat = copperFitting.clone();
+      const feedPipe = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.56, 12), this.feedPipeMat);
       feedPipe.position.set(0.4, headY + 0.06, 0.16);
       this.root.add(feedPipe);
 
       this.dropGroup = new THREE.Group();
       const dropGeo = new THREE.SphereGeometry(0.026, 8, 8);
       for (let i = 0; i < 12; i++) {
-        const drop = new THREE.Mesh(dropGeo, copperFitting);
+        const drop = new THREE.Mesh(dropGeo, this.feedPipeMat);
         this.dropGroup.add(drop);
         this._dropSeeds.push({ phase: i / 12 });
       }
@@ -525,7 +557,8 @@
       const capCollar = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.1, 16), steelMachined);
       capCollar.position.set(-0.5, headY + 0.1, 0.28);
       this.root.add(capCollar);
-      const capProbe = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 2.38, 14), steel316);
+      this.capProbeMat = steel316.clone();
+      const capProbe = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 2.38, 14), this.capProbeMat);
       capProbe.position.set(-0.5, 0.54, 0.28);
       this.root.add(capProbe);
       const capTip = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.024, 0.18, 14), ptfeMat);
@@ -552,8 +585,8 @@
       // 12. Instanced Rising Sparger Micro-Bubbles
       this.maxBubbles = 220;
       const bubGeo = new THREE.SphereGeometry(0.021, 8, 8);
-      const bubMat = new THREE.MeshBasicMaterial({ color: 0xe2f5f2, transparent: true, opacity: 0.72 });
-      this.bubbleMesh = new THREE.InstancedMesh(bubGeo, bubMat, this.maxBubbles);
+      this.bubMat = new THREE.MeshBasicMaterial({ color: 0xe2f5f2, transparent: true, opacity: 0.72 });
+      this.bubbleMesh = new THREE.InstancedMesh(bubGeo, this.bubMat, this.maxBubbles);
       this.bubbleDummy = new THREE.Object3D();
       for (let i = 0; i < this.maxBubbles; i++) {
         const ang = (i * 2.39996) % (Math.PI * 2);
@@ -567,6 +600,22 @@
         });
       }
       this.root.add(this.bubbleMesh);
+
+      // 13. Equation-Explorer Physical Zone Highlight Torus
+      this.zoneHighlightMat = new THREE.MeshBasicMaterial({
+        color: 0xb45309,
+        transparent: true,
+        opacity: 0.0,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      this.zoneHighlightRing = new THREE.Mesh(
+        new THREE.TorusGeometry(this.tankR + 0.09, 0.024, 12, 64),
+        this.zoneHighlightMat
+      );
+      this.zoneHighlightRing.rotation.x = Math.PI / 2;
+      this.zoneHighlightRing.visible = false;
+      this.root.add(this.zoneHighlightRing);
 
       this._updateCamera();
       this.setTheme(this.theme);
@@ -611,6 +660,8 @@
         this.orbit.lastY = e.clientY;
         this.orbit.theta -= dx * 0.009;
         this.orbit.phi = clamp(this.orbit.phi - dy * 0.008, 0.35, 2.25);
+        this.orbitTarget.theta = this.orbit.theta;
+        this.orbitTarget.phi = this.orbit.phi;
         this._updateCamera();
       });
 
@@ -626,6 +677,7 @@
         (e) => {
           e.preventDefault();
           this.orbit.radius = clamp(this.orbit.radius + e.deltaY * 0.004, 4.8, 10.5);
+          this.orbitTarget.radius = this.orbit.radius;
           this._updateCamera();
         },
         { passive: false }
@@ -643,11 +695,38 @@
     }
 
     resetCamera() {
+      this.setHighlightZone("all");
       this.orbit.theta = 0.54;
       this.orbit.phi = 1.24;
       this.orbit.radius = 8.0;
       this.orbit.targetY = 0.24;
       this._updateCamera();
+    }
+
+    setHighlightZone(zoneName) {
+      const z = zoneName || "all";
+      this.highlightZone = z;
+      const presets = {
+        all: { theta: 0.54, phi: 1.24, radius: 8.0, targetY: 0.24 },
+        growth: { theta: 0.35, phi: 1.30, radius: 6.6, targetY: -0.20 },
+        sparger: { theta: 0.72, phi: 1.42, radius: 6.2, targetY: -0.95 },
+        impeller: { theta: -0.45, phi: 1.32, radius: 6.0, targetY: -0.55 },
+        feed: { theta: 0.65, phi: 1.02, radius: 6.4, targetY: 1.05 },
+        patankar: { theta: 0.54, phi: 1.24, radius: 7.4, targetY: 0.0 },
+      };
+      const target = presets[z] || presets.all;
+      this.orbitTarget.theta = target.theta;
+      this.orbitTarget.phi = target.phi;
+      this.orbitTarget.radius = target.radius;
+      this.orbitTarget.targetY = target.targetY;
+      if (this.motionPaused) {
+        this.orbit.theta = target.theta;
+        this.orbit.phi = target.phi;
+        this.orbit.radius = target.radius;
+        this.orbit.targetY = target.targetY;
+        this._updateCamera();
+      }
+      this._renderStep(0.016);
     }
 
     setScale(scaleL) {
@@ -705,6 +784,10 @@
     }
 
     _loop(now) {
+      if (!this._isVisible) {
+        this._rafId = null;
+        return;
+      }
       const dt = Math.min(0.05, Math.max(0.001, (now - this._lastTime) / 1000.0));
       this._lastTime = now;
       this._renderStep(dt);
@@ -722,6 +805,24 @@
       const highShear = s.v_tip > 1.75;
 
       if (this.backend === "webgl") {
+        if (!this.orbit.dragging) {
+          const ease = 1.0 - Math.exp(-8.0 * dt);
+          const dT = Math.abs(this.orbitTarget.theta - this.orbit.theta);
+          const dP = Math.abs(this.orbitTarget.phi - this.orbit.phi);
+          const dR = Math.abs(this.orbitTarget.radius - this.orbit.radius);
+          const dY = Math.abs(this.orbitTarget.targetY - this.orbit.targetY);
+          if (dT + dP + dR + dY > 0.0005) {
+            this.orbit.theta += (this.orbitTarget.theta - this.orbit.theta) * ease;
+            this.orbit.phi += (this.orbitTarget.phi - this.orbit.phi) * ease;
+            this.orbit.radius += (this.orbitTarget.radius - this.orbit.radius) * ease;
+            this.orbit.targetY += (this.orbitTarget.targetY - this.orbit.targetY) * ease;
+            this._updateCamera();
+          }
+        }
+
+        this._highlightPulse += dt * 4.0;
+        const hz = this.highlightZone || "all";
+
         const brothH = this.tankH * fillFrac;
         const brothCenterY = this.tankBottomY + 0.5 * brothH + 0.04;
         this.brothCyl.scale.set(1, brothH, 1);
@@ -733,25 +834,59 @@
         const gCol = 0.43 - 0.11 * xvNorm + (doLow ? -0.1 : 0.06);
         const bCol = 0.40 - 0.24 * xvNorm;
         this.brothMat.color.setRGB(clamp(rCol, 0, 1), clamp(gCol, 0, 1), clamp(bCol, 0, 1));
-        this.brothMat.opacity = 0.34 + 0.28 * xvNorm;
+        this.brothMat.opacity = (0.34 + 0.28 * xvNorm) * (hz === "growth" ? 1.18 : 1.0);
 
         if (doLow) {
           this.doTipMat.color.setHex(0xb91c1c);
           this.doTipMat.emissive.setHex(0x991b1b);
+          this.doTipMat.emissiveIntensity = hz === "sparger" ? 0.9 : 0.35;
         } else {
           this.doTipMat.color.setHex(0x0f766e);
           this.doTipMat.emissive.setHex(0x0d6861);
+          this.doTipMat.emissiveIntensity = hz === "sparger" ? 0.85 : 0.35;
         }
 
-        if (s.v_tip > 2.15) {
-          this.shearMat.color.setHex(0xb91c1c);
-          this.shearMat.opacity = 0.46;
+        if (this.spargerMat) {
+          this.spargerMat.emissiveIntensity = hz === "sparger" ? 0.65 : 0.0;
+        }
+        if (this.capProbeMat) {
+          this.capProbeMat.emissive.setHex(hz === "growth" ? 0xb45309 : 0x000000);
+          this.capProbeMat.emissiveIntensity = hz === "growth" ? 0.45 : 0.0;
+        }
+        if (this.feedPipeMat) {
+          this.feedPipeMat.emissive.setHex(hz === "feed" ? 0xf59e0b : 0x000000);
+          this.feedPipeMat.emissiveIntensity = hz === "feed" ? 0.55 : 0.0;
+        }
+
+        if (hz === "impeller" || s.v_tip > 2.15) {
+          this.shearMat.color.setHex(hz === "impeller" ? 0xb45309 : 0xb91c1c);
+          this.shearMat.opacity = hz === "impeller" ? 0.56 + 0.14 * Math.sin(this._highlightPulse) : 0.46;
         } else if (highShear) {
           this.shearMat.color.setHex(0xb45309);
           this.shearMat.opacity = 0.38;
         } else {
           this.shearMat.color.setHex(0x0f766e);
           this.shearMat.opacity = 0.22;
+        }
+
+        if (this.zoneHighlightRing && this.zoneHighlightMat) {
+          if (hz === "all") {
+            this.zoneHighlightRing.visible = false;
+          } else {
+            this.zoneHighlightRing.visible = true;
+            const ringSpecs = {
+              growth: { y: -0.35, color: 0x0f766e, scale: 1.0 },
+              sparger: { y: -1.22, color: 0x0f766e, scale: 0.72 },
+              impeller: { y: -0.92, color: 0xb45309, scale: 0.64 },
+              feed: { y: this.tankBottomY + brothH + 0.06, color: 0xb45309, scale: 0.96 },
+              patankar: { y: this.tankBottomY + brothH + 0.04, color: 0x0f766e, scale: 0.98 },
+            };
+            const rs = ringSpecs[hz] || ringSpecs.growth;
+            this.zoneHighlightRing.position.y = rs.y;
+            this.zoneHighlightRing.scale.set(rs.scale, rs.scale, 1);
+            this.zoneHighlightMat.color.setHex(rs.color);
+            this.zoneHighlightMat.opacity = 0.68 + 0.18 * Math.sin(this._highlightPulse);
+          }
         }
 
         if (!this.motionPaused) {
@@ -909,11 +1044,35 @@
       ctx.font = '11px "IBM Plex Mono", monospace';
       ctx.fillStyle = textCol;
       ctx.fillText(this.scaleL + " L Vessel", leftX, topY - 18);
+
+      if (this.highlightZone && this.highlightZone !== "all") {
+        const zoneBoxes = {
+          growth: { y: liqY + 8, h: Math.max(24, liqH - 18), col: gtCol, label: "ZONE: BIOMASS GROWTH (mu)" },
+          sparger: { y: botY - 30, h: 28, col: gtCol, label: "ZONE: SPARGER / O2 TRANSFER (k_La)" },
+          impeller: { y: botY - tankH * 0.62, h: tankH * 0.42, col: hybCol, label: "ZONE: IMPELLER SHEAR (Delta k_d)" },
+          feed: { y: topY - 4, h: 36, col: hybCol, label: "ZONE: FEED & DILUTION (D = F/V)" },
+          patankar: { y: liqY - 10, h: 20, col: gtCol, label: "ZONE: BOUNDARY POSITIVITY phi_1(z)" },
+        };
+        const zb = zoneBoxes[this.highlightZone];
+        if (zb) {
+          ctx.save();
+          ctx.strokeStyle = zb.col;
+          ctx.lineWidth = 2;
+          ctx.setLineDash([5, 3]);
+          ctx.strokeRect(leftX - 10, zb.y, tankW + 20, zb.h);
+          ctx.setLineDash([]);
+          ctx.fillStyle = zb.col;
+          ctx.font = 'bold 10.5px "IBM Plex Mono", monospace';
+          ctx.fillText(zb.label, Math.max(8, leftX - 10), Math.max(14, zb.y - 5));
+          ctx.restore();
+        }
+      }
     }
 
     destroy() {
       if (this._rafId) global.cancelAnimationFrame(this._rafId);
       if (this._ro) this._ro.disconnect();
+      if (this._io) this._io.disconnect();
       if (this._envRT && this._envRT.dispose) this._envRT.dispose();
       if (this.shadowTex && this.shadowTex.dispose) this.shadowTex.dispose();
       if (this.renderer && this.renderer.dispose) this.renderer.dispose();
