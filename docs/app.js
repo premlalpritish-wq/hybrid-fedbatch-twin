@@ -228,7 +228,7 @@
       elLegendGt.style.display = appState.showTruth ? "inline-flex" : "none";
       elParityNote.textContent = appState.showTruth
         ? "Validation Oracle ON: comparing Ground-Truth Plant against Hybrid EKF (+/- 2 sigma) and Nominal Baseline."
-        : "5 L Operator Mode hides plant truth by default (D9 parity): displaying EKF state +/- 2 sigma, online PAT, and sparse at-line LIMS samples.";
+        : "5 L Operator Mode hides plant truth by default (Portela Level 1 offline simulator / Level 2-ready EKF observer): displaying EKF state +/- 2 sigma, online PAT, and sparse at-line LIMS samples.";
     }
 
     function runAndRenderSimulation() {
@@ -882,17 +882,16 @@
       const hybRatio = ctrlBench.hybrid_norm_rmse / Math.max(1e-9, ctrlBench.nominal_norm_rmse);
       document.getElementById("hero-ekf-ratio").textContent = fmt(hybRatio, 3) + "x";
 
-      // Audit progression table rows
+      // Governance progression table rows
       const auditBody = document.getElementById("audit-progression-tbody");
       if (auditBody) {
         auditBody.innerHTML = bundle.audit_progression
           .map((item) => {
-            const isGo = item.verdict.indexOf("GO") === 0;
+            const isGo = item.verdict.indexOf("PASS") === 0 || item.verdict.indexOf("RELEASE") === 0 || item.verdict.indexOf("GO") === 0;
             const markCls = isGo ? "mark-pass" : "mark-fail";
             return (
               "<tr>" +
               "<td><strong>" + escapeHtml(item.iteration) + "</strong></td>" +
-              '<td class="num">' + fmt(item.score, 1) + "/10</td>" +
               '<td><span class="' + markCls + '">' + escapeHtml(item.verdict) + "</span></td>" +
               '<td class="num">' + item.p0_count + "</td>" +
               '<td class="num">' + item.p1_count + "</td>" +
@@ -963,6 +962,7 @@
             '<td class="num">' + fmt(b.kd_r2, 4) + "</td>" +
             '<td class="num">' + fmt(b.kla_r2, 4) + "</td>" +
             '<td class="num">' + fmt(b.qAnet_r2, 4) + "</td>" +
+            '<td class="num">' + fmt(b.qAnet_rmse, 4) + "</td>" +
             '<td class="num">' + fmt(b.mu_r2, 4) + "</td>" +
             '<td class="num">' + fmt(b.hybrid_norm_rmse, 4) + "</td>" +
             '<td class="num">' + fmt(b.nominal_norm_rmse, 4) + "</td>" +
@@ -990,8 +990,8 @@
       aicBody.innerHTML = g86.arch_aic_bic
         .map((r) => {
           const badge = r.selected
-            ? '<span class="mark-pass">Selected (GAM-86)</span>'
-            : '<span class="mono">Candidate</span>';
+            ? '<span class="mark-pass">Selected (GAM-86, Conv.)</span>'
+            : '<span class="mono">' + (r.converged ? "Candidate (Conv.)" : "Cap (500 it.)") + "</span>";
           return (
             "<tr>" +
             '<td class="mono">' + escapeHtml(r.cadence) + "</td>" +
@@ -1032,7 +1032,7 @@
         .map(
           (t) =>
             "<tr>" +
-            '<td class="mono" style="font-size:12px;">' + escapeHtml(t.name) + "</td>" +
+            '<td class="mono" style="font-size:12px;">' + escapeHtml(t.name).replace(/_/g, "_<wbr>") + "</td>" +
             '<td><span class="mark-pass">' + escapeHtml(t.status) + "</span></td>" +
             "<td>" + escapeHtml(t.focus) + "</td>" +
             "</tr>"
@@ -1168,7 +1168,7 @@
       auditSim: null,
       scaleMode: "matched",
       scaleXtot: 25,
-      scaleVtip: 2.13,
+      scaleVtip: 2.125,
       scaleEnsCache: null,
     };
 
@@ -1236,8 +1236,8 @@
             controlMode: "closed_loop",
             muTarget: 0.26,
             manualFeedRate: 0.08,
-            rpm: 520,
-            vvm: 1.4,
+            rpm: 450,
+            vvm: 1.2,
             disturbanceMode: "none",
           },
           bundle
@@ -1247,7 +1247,7 @@
         {
           scaleL: 5,
           controlMode: "manual",
-          muTarget: 0.28,
+          muTarget: 0.26,
           manualFeedRate: monographState.dilemmaFeed,
           rpm: 450,
           vvm: 1.2,
@@ -1441,8 +1441,8 @@
       // Node labels inside cell
       ctx.font = '600 10.5px "IBM Plex Sans", sans-serif';
       ctx.fillStyle = C.ink;
-      ctx.textAlign = "left";
-      ctx.fillText("S=" + fmt(st[2], 2), Math.max(padD, inX - 4), cyCell - 10);
+      ctx.textAlign = "right";
+      ctx.fillText("S=" + fmt(st[2], 2), Math.max(padD + 44, cxCell - rxCell - 6), cyCell - 12);
       ctx.textAlign = "center";
       ctx.fillText("Pyr", pyrX, cyCell - 8);
       ctx.fillStyle = C.gtInk;
@@ -1627,7 +1627,7 @@
         badge: "Active Zone: Broth Bulk & Cellular Metabolism",
         title: "Specific Growth Rate & Overflow Efficiency",
         formula: "\\mu = \\mu_{\\text{mech}}(S, C_L)\\cdot \\eta_\\mu(S, A)",
-        desc: "Mechanistic Monod substrate and oxygen affinity multiplied by a bounded neural correction inside [0.4, 1.3] that captures overflow inhibition when glucose or acetate rises.",
+        desc: "Mechanistic Monod substrate and oxygen affinity multiplied by a bounded neural correction inside (0.05, 1.05) that captures overflow inhibition when glucose or acetate rises.",
       },
       sparger: {
         badge: "Active Zone: Sintered Sparger Ring & Plume",
@@ -1825,7 +1825,7 @@
       drawPatankarDemo();
     }
 
-    // ---- Section 3: Adversarial PI Audit Stepper & Trajectory Compare ----
+    // ---- Section 3: Literature-Grounded Verification Stepper & Trajectory Compare ----
     const AUDIT_STEP_DIFFS = [
       {
         flawTitle: "Iteration 0 Flaws: Sensor Leakage & Volume Lock-In (P0 x3, P1 x5)",
@@ -1833,7 +1833,7 @@
           "<strong>1. Dead-Cell Sensor Leakage:</strong> Assumed offline instruments measure dead cells (<span data-katex=\"X_d\">X_d</span>) directly inside EKF updates.<br />" +
           "<strong>2. Extensive Inputs:</strong> Passed reactor volume (<span data-katex=\"V\">V</span>) to the neural network, blocking 5 L to 1000 L transfer.<br />" +
           "<strong>3. Negative Step Risk:</strong> Fixed-step explicit solver could undershoot glucose below zero.",
-        fixTitle: "PI Audit Mandate: Physical Realism & Observability Lock",
+        fixTitle: "Governance Mandate: Physical Realism & Observability Lock",
         fixHtml:
           "Strip <span data-katex=\"X_d\">X_d</span> from the sensor observation matrix <span data-katex=\"H\">H</span>, enforce intensive fluid physics (<span data-katex=\"P_g/V, v_s, v_{\\text{tip}}\">P_g/V, v_s, v_tip</span>), and lock non-negativity with Patankar-Rosenbrock <span data-katex=\"\\phi_1(z)\">phi_1(z)</span>.",
       },
@@ -1842,17 +1842,17 @@
         flawHtml:
           "<strong>1. Growth/Death Collinearity:</strong> Single-feed calibration failed to decouple <span data-katex=\"\\mu\">mu</span> from lysis <span data-katex=\"k_d\">k_d</span> (<span data-katex=\"\\kappa_{\\text{rel}} > 45\">kappa_rel &gt; 45</span>).<br />" +
           "<strong>2. No Extrapolation Guard:</strong> Unpruned neural ensemble extrapolated unpredictably outside training broth densities.",
-        fixTitle: "PI Audit Mandate: iDoE Excitation & Mahalanobis Guard",
+        fixTitle: "Governance Mandate: iDoE Excitation & Mahalanobis Guard",
         fixHtml:
-          "Deploy 3-batch iDoE calibration (pulses, starvation, oxygen dips) reaching <span data-katex=\"\\kappa_{\\text{rel}} = 14.37\">kappa_rel = 14.37</span>, prune via AIC/BIC to GAM-86, and add smooth <span data-katex=\"D_M\">D_M</span> fallback at <span data-katex=\"p_{99} = 5.01\">p99 = 5.01</span>.",
+          "Deploy 3-batch iDoE calibration reaching <span data-katex=\"\\kappa_{\\text{rel}} = 38.18\">kappa_rel = 38.18</span> (seed 42; 14-seed max &le; 38.18), select GAM-86 via 0.2 h convergence &amp; 5-regime gate, and add smooth <span data-katex=\"D_M\">D_M</span> relaxation toward a power-law prior past <span data-katex=\"p_{99} = 5.01\">p99 = 5.01</span>.",
       },
       {
-        flawTitle: "Iteration 2 Verified Architecture: Portela Level 3+ Blueprint (0 P0, 0 P1)",
+        flawTitle: "Iteration 2 Verified Architecture: Portela Level 1 Digital Model / Level 2-Ready EKF (0 P0, 0 P1)",
         flawHtml:
-          "All P0/P1 structural defects resolved. VJP continuous sensitivity Jacobians propagate uncertainty cleanly across unobserved <span data-katex=\"X_d\">X_d</span> using Padé(6,6) matrix exponential covariance.",
-        fixTitle: "8/8 Contract Suite & Held-Out Benchmark Proof",
+          "All P0/P1 structural defects resolved. Offline Stage-2 computes exact discrete reverse-mode VJP gradients (<code>max_rel = 6.92e-7</code>) with zero <span data-katex=\"X_d\">X_d</span> supervision; runtime EKF propagates central finite-difference Jacobians with unclipped Pad&eacute;(6,6) matrix exponentials.",
+        fixTitle: "8/8 Contract Suite & Multi-Regime Error Reduction Proof",
         fixHtml:
-          "Held-out <span data-katex=\"R^2(\\mu) = 0.9951\">0.9951</span>, <span data-katex=\"R^2(k_L a) = 0.9699\">0.9699</span>. Aeration-Fault Error Drop: <strong>-85.8% at 5 L</strong> (1000 L nRMSE <code>0.0553</code> vs <code>0.3411</code>).",
+          "Held-out pooled <span data-katex=\"R^2(\\mu) = 0.9951\">0.9951</span>, <span data-katex=\"R^2(k_L a) = 0.9699\">0.9699</span>. Live 5 L Air-Fault Drop: <strong>-69.2% (0.308x)</strong> | 5 L Benchmark (-55% vvm): <strong>-59.1%</strong> | Held-Out 5-Regime: <strong>-85.8%</strong> | 1000 L: <strong>-83.8%</strong> (<code>0.0553</code> vs <code>0.3411</code>).",
       },
     ];
 
@@ -1865,7 +1865,7 @@
       if (prog) {
         setTextById(
           "audit-step-verdict",
-          prog.iteration + ": " + fmt(prog.score, 1) + " / 10 (" + prog.verdict + ") | " + prog.p0_count + " P0, " + prog.p1_count + " P1"
+          prog.iteration + ": " + prog.verdict + " | " + prog.p0_count + " P0, " + prog.p1_count + " P1"
         );
       }
       document.querySelectorAll(".audit-step-btn[data-audit-step]").forEach((btn) => {
@@ -1874,8 +1874,11 @@
 
       const card = document.getElementById("audit-step-card");
       if (card && diff) {
+        const topBoxCls = idx === 2 ? "audit-diff-box resolved" : "audit-diff-box flaw";
         card.innerHTML =
-          '<div class="audit-diff-box flaw">' +
+          '<div class="' +
+          topBoxCls +
+          '">' +
           '<div class="audit-diff-label">' +
           escapeHtml(diff.flawTitle) +
           "</div>" +
@@ -1926,21 +1929,21 @@
       const tMax = sim.t[sim.t.length - 1] || 16;
 
       function renderSub(ox, oy, sw, sh, title, unitLabel, maxVal, getterTrue, getterNom, getterHyb, getterStd) {
-        const pad = { l: 44, r: 16, t: 26, b: 26 };
+        const pad = { l: 44, r: 26, t: 26, b: 26 };
         const pw = Math.max(50, sw - pad.l - pad.r);
         const ph = Math.max(50, sh - pad.t - pad.b);
         const px = (k) => ox + pad.l + (sim.t[k] / tMax) * pw;
         const py = (v) => oy + pad.t + ph * (1 - clampVal(v, 0, maxVal) / maxVal);
 
-        // Highlight aeration drop fault window 6..10h
-        const fx0 = ox + pad.l + (6 / tMax) * pw;
-        const fx1 = ox + pad.l + (10 / tMax) * pw;
+        // Highlight aeration drop fault window 6.0..9.5h (-55% vvm)
+        const fx0 = ox + pad.l + (6.0 / tMax) * pw;
+        const fx1 = ox + pad.l + (9.5 / tMax) * pw;
         ctx.fillStyle = C.alertWash;
         ctx.fillRect(fx0, oy + pad.t, fx1 - fx0, ph);
         ctx.font = '9.5px "IBM Plex Mono", monospace';
         ctx.fillStyle = C.alertInk;
         ctx.textAlign = "center";
-        ctx.fillText("-40% Air Fault", (fx0 + fx1) * 0.5, oy + pad.t + 12);
+        ctx.fillText(sw < 360 ? "-55% Air" : "-55% Air Fault (6-9.5h)", (fx0 + fx1) * 0.5, oy + pad.t + 12);
 
         // Horizontal ticks
         ctx.strokeStyle = C.border;
@@ -1957,7 +1960,16 @@
           ctx.fillText(fmt(maxVal * (1 - g / 3), 1), ox + pad.l - 5, y + 3);
         }
 
-        // +/- 2 sigma band for Audited EKF
+        // Bottom time ticks (0h, 4h, 8h, 12h, 16h)
+        ctx.font = '9.5px "IBM Plex Mono", monospace';
+        ctx.fillStyle = C.muted;
+        for (const hr of [0, 4, 8, 12, 16]) {
+          const tx = ox + pad.l + (hr / tMax) * pw;
+          ctx.textAlign = hr === 0 ? "left" : hr === 16 ? "right" : "center";
+          ctx.fillText(hr + "h", tx, oy + pad.t + ph + 14);
+        }
+
+        // +/- 2 sigma band for Verified EKF
         if (showAudit && getterStd) {
           ctx.fillStyle = C.hybBand;
           ctx.beginPath();
@@ -1999,7 +2011,7 @@
           ctx.restore();
         }
 
-        // Audited EKF solid amber
+        // Verified EKF solid amber
         if (showAudit) {
           ctx.strokeStyle = C.hyb;
           ctx.lineWidth = 2.2;
@@ -2084,10 +2096,6 @@
       const stdEta = [];
       const dmVals = [];
       const memCurves = Array.from({ length: B }, () => []);
-      const tmpBundles = members.map((w) => ({
-        ...bundle,
-        gam86: { ...bundle.gam86, weights: w },
-      }));
       const muM =
         bundle.p_rec.mu_max *
         (0.3 / (bundle.p_rec.K_S + 0.3)) *
@@ -2102,9 +2110,7 @@
         stdEta.push(p.std_kla);
         dmVals.push(p.d_m);
         for (let b = 0; b < B; b++) {
-          memCurves[b].push(
-            engine.predictGamWithUQ(xv, xd, 0.3, 4.5, 0.2, vTip, muM, tmpBundles[b]).eta_kla
-          );
+          memCurves[b].push(p.member_eta_kla[b]);
         }
       }
       return { xVals, meanEta, stdEta, dmVals, memCurves };
@@ -2127,7 +2133,7 @@
       const p99 = bundle.gam86.dov_stats.global.p99 || 5.0118;
 
       setTextById("val-scale-xtot", fmt(xt, 0) + " g/L");
-      setTextById("val-scale-vtip", fmt(vTip, 2) + " m/s");
+      setTextById("val-scale-vtip", fmt(vTip, 3) + " m/s");
       const badge = document.getElementById("scaleup-dm-badge");
       if (badge) {
         if (curUQ.in_domain) {
@@ -2213,8 +2219,9 @@
       ctx.fillText("1000 L", leftW * 0.68, baseY - v1kH - 6);
       ctx.font = '10px "IBM Plex Sans", sans-serif';
       ctx.fillStyle = vTip > 2.6 ? C.alertInk : C.muted;
-      const eqRpm = (vTip * 60) / (Math.PI * 0.422);
-      ctx.fillText(fmt(eqRpm, 0) + " RPM (v_tip " + fmt(vTip, 2) + ")", leftW * 0.68, baseY + 14);
+      const d1000 = engine.computeHydrodynamics(135, 0.2, 400, { ...bundle.p_rec, V_vessel: 1000 }).D_i_m;
+      const eqRpm = (vTip * 60) / (Math.PI * d1000);
+      ctx.fillText(fmt(eqRpm, 1) + " RPM (v_tip " + fmt(vTip, 3) + ")", leftW * 0.68, baseY + 14);
       ctx.fillStyle = C.muted;
       ctx.fillText("delta_kd = " + fmt(curUQ.delta_kd, 3) + " +/- " + fmt(2 * curUQ.std_kd, 3), leftW * 0.68, baseY + 26);
 
@@ -2345,7 +2352,7 @@
 
     function bindSection4ScaleUp() {
       const presets = {
-        matched: { xtot: 25, vtip: 2.13 },
+        matched: { xtot: 25, vtip: 2.125 },
         naive: { xtot: 42, vtip: 3.30 },
         ood: { xtot: 84, vtip: 2.95 },
       };

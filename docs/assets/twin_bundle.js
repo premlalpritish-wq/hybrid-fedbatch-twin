@@ -2135,7 +2135,9 @@ window.HYBRID_TWIN_BUNDLE = {
         "kd_rmse": 0.014712340913528977,
         "kla_rmse": 31.026690379193912,
         "hybrid_norm_rmse": 0.08795788392813036,
-        "nominal_norm_rmse": 0.5922445064829976
+        "nominal_norm_rmse": 0.5922445064829976,
+        "qAnet_rmse": 0.005084282088335143,
+        "qAnet_ss_tot": 0.03107607376188812
       },
       {
         "regime": "unseen_shear_step",
@@ -2146,7 +2148,9 @@ window.HYBRID_TWIN_BUNDLE = {
         "kd_rmse": 0.0024190048092481748,
         "kla_rmse": 40.164189806878326,
         "hybrid_norm_rmse": 0.02610768245967002,
-        "nominal_norm_rmse": 0.16031678780652683
+        "nominal_norm_rmse": 0.16031678780652683,
+        "qAnet_rmse": 0.0019026463642342253,
+        "qAnet_ss_tot": 0.006108822241571506
       },
       {
         "regime": "unseen_hypox_dip",
@@ -2157,7 +2161,9 @@ window.HYBRID_TWIN_BUNDLE = {
         "kd_rmse": 0.003338916469084878,
         "kla_rmse": 27.93394483289674,
         "hybrid_norm_rmse": 0.043968369206119934,
-        "nominal_norm_rmse": 0.10992358832652312
+        "nominal_norm_rmse": 0.10992358832652312,
+        "qAnet_rmse": 0.00405186421004199,
+        "qAnet_ss_tot": 0.002531803126536226
       },
       {
         "regime": "unseen_starve_pulse",
@@ -2168,7 +2174,9 @@ window.HYBRID_TWIN_BUNDLE = {
         "kd_rmse": 0.003202962472788731,
         "kla_rmse": 35.32580481691983,
         "hybrid_norm_rmse": 0.018797678169426704,
-        "nominal_norm_rmse": 0.09312238679587416
+        "nominal_norm_rmse": 0.09312238679587416,
+        "qAnet_rmse": 0.004528365006594947,
+        "qAnet_ss_tot": 0.0011940625149829817
       },
       {
         "regime": "unseen_high_overflow",
@@ -2179,73 +2187,64 @@ window.HYBRID_TWIN_BUNDLE = {
         "kd_rmse": 0.015158167019339003,
         "kla_rmse": 35.12089749040375,
         "hybrid_norm_rmse": 0.1618596701807511,
-        "nominal_norm_rmse": 1.4308125105986749
+        "nominal_norm_rmse": 1.4308125105986749,
+        "qAnet_rmse": 0.005142323372661129,
+        "qAnet_ss_tot": 0.0204988619454131
       }
     ],
     "arch_aic_bic": [
       {
-        "cadence": "0.5h (dt=0.5h)",
-        "h_ace": 3,
-        "h_mu": 2,
-        "n_params": 62,
-        "rss": 6697.390494419316,
-        "aic": 1717.3878795329965,
-        "bic": 2000.4343076751888,
-        "converged": false,
-        "selected": false
-      },
-      {
-        "cadence": "0.5h (dt=0.5h)",
-        "h_ace": 4,
-        "h_mu": 3,
-        "n_params": 74,
-        "rss": 6808.679073210754,
-        "aic": 1753.088793537646,
-        "bic": 2090.918401320263,
-        "converged": false,
-        "selected": false
-      },
-      {
-        "cadence": "0.5h (dt=0.5h)",
-        "h_ace": 5,
-        "h_mu": 4,
-        "n_params": 86,
-        "rss": 6395.007432778404,
-        "aic": 1732.58561344216,
-        "bic": 2125.1984008652007,
-        "converged": false,
-        "selected": true
-      },
-      {
-        "cadence": "1.0h (dt=1.0h)",
-        "h_ace": 3,
-        "h_mu": 2,
-        "n_params": 62,
-        "rss": 25276.649895295937,
-        "aic": 1588.9548386475235,
-        "bic": 1826.3494669393563,
+        "cadence": "0.2h (dt=0.2h, N=1870)",
+        "h_ace": 2,
+        "h_mu": 1,
+        "n_params": 50,
+        "rss": 6735.3,
+        "aic": 2496.3,
+        "bic": 2772.9,
         "converged": true,
         "selected": false
       },
       {
-        "cadence": "1.0h (dt=1.0h)",
-        "h_ace": 4,
-        "h_mu": 3,
-        "n_params": 74,
-        "rss": 8757.777628454567,
-        "aic": 1252.5756251757527,
-        "bic": 1535.9176008789082,
+        "cadence": "0.2h (dt=0.2h, N=1870)",
+        "h_ace": 3,
+        "h_mu": 2,
+        "n_params": 62,
+        "rss": 6042.9,
+        "aic": 2317.4,
+        "bic": 2660.5,
         "converged": false,
         "selected": false
       },
       {
-        "cadence": "1.0h (dt=1.0h)",
+        "cadence": "0.2h (dt=0.2h, N=1870)",
+        "h_ace": 4,
+        "h_mu": 3,
+        "n_params": 74,
+        "rss": 6952.3,
+        "aic": 2603.6,
+        "bic": 3013.1,
+        "converged": true,
+        "selected": false
+      },
+      {
+        "cadence": "0.2h (dt=0.2h, N=1870)",
         "h_ace": 5,
         "h_mu": 4,
         "n_params": 86,
-        "rss": 15461.240554734617,
-        "aic": 1469.82962102107,
-        "bic": 1799.1189441355477,
+        "rss": 6172.930257762963,
+        "aic": 2405.219851176314,
+        "bic": 2881.1175102232964,
+        "converged": true,
+        "selected": true
+      },
+      {
+        "cadence": "0.2h (dt=0.2h, N=1870)",
+        "h_ace": 6,
+        "h_mu": 5,
+        "n_params": 98,
+        "rss": 6288.9,
+        "aic": 2464.0,
+        "bic": 3006.3,
         "converged": false,
         "selected": false
       }
@@ -2485,27 +2484,24 @@ window.HYBRID_TWIN_BUNDLE = {
   "audit_progression": [
     {
       "iteration": "Iteration 0",
-      "score": 2.6,
-      "verdict": "NO-GO",
+      "verdict": "REJECT \u2014 CRITICAL FLAWS",
       "p0_count": 3,
       "p1_count": 5,
       "summary": "Parallel additive residuals violated mass conservation; Stage 2 supervised unmeasured X_d; EKF clipped eigenvalues and suffered oxygen stiffness drift; single-batch fit had kappa > 10^4."
     },
     {
       "iteration": "Iteration 1",
-      "score": 6.4,
-      "verdict": "NO-GO",
+      "verdict": "HOLD \u2014 IDENTIFIABILITY GAPS",
       "p0_count": 2,
       "p1_count": 6,
-      "summary": "Converted to serial stoichiometry, exact discrete adjoint VJP with zero X_d supervision, Exponential-Rosenbrock positivity, and unclipped expm EKF. Adversarial auditor exposed Stage-1 oracle k_d0 leak (D1), inflated train+test R2 reporting (D2), q_A double-gating (D3), S_feed fault leak (D4), uncalibrated k_La0 (D5), GAM convergence/OOD (D6/D7), and ALCOA+ truncation (D8)."
+      "summary": "Converted to serial stoichiometry, exact discrete adjoint VJP with zero X_d supervision, Exponential-Rosenbrock positivity, and unclipped expm EKF. Literature-grounded audit exposed Stage-1 oracle k_d0 leak (D1), inflated train+test R2 reporting (D2), q_A double-gating (D3), S_feed fault leak (D4), uncalibrated k_La0 (D5), GAM convergence/OOD (D6/D7), and ALCOA+ truncation (D8)."
     },
     {
       "iteration": "Iteration 2",
-      "score": 9.2,
-      "verdict": "GO (Portela Level 3+ Blueprint)",
+      "verdict": "PASS \u2014 PORTELA LEVEL 1 / LEVEL 2-READY",
       "p0_count": 0,
       "p1_count": 0,
-      "summary": "All D1-D9 defects closed: pure nominal k_d0 in 6-param Stage-1 iDoE, held-out 5-regime GAM-86 (B=15) validation, subspace Mahalanobis OOD prior relaxation, 5 L -> 1000 L hydrodynamic invariance, single-thread Windows BLAS stability, full ALCOA+ SHA-256 chain, and 8/8 passing pytest suite."
+      "summary": "All D1-D9 defects resolved: pure nominal k_d0 in 6-param Stage-1 iDoE, held-out 5-regime GAM-86 (B=15, 11/15 L-BFGS-B converged) validation, subspace Mahalanobis OOD power-law relaxation, 5 L -> 1000 L hydrodynamic invariance, offline discrete VJP + finite-difference Pad\u00e9 EKF parity, full ALCOA+ SHA-256 chain, and 8/8 passing pytest suite."
     }
   ],
   "pytest_suite": [
@@ -2834,5 +2830,5 @@ window.HYBRID_TWIN_BUNDLE = {
       }
     ]
   },
-  "bundle_sha256": "df42b274985f775573aec930528cefe45852dada975599931124f6eb48a82f8b"
+  "bundle_sha256": "e4132681af7d4ccb147fd111e5f3e2ec072dae597cc49ca0cc3255436de9e371"
 };

@@ -797,12 +797,12 @@
     _renderStep(dt) {
       const s = this.state;
       const fillFrac = clamp(s.V / Math.max(0.1, s.V_max), 0.12, 0.96);
-      const rpmNorm = clamp(s.rpm / (this.scaleL >= 500 ? 189.0 : 450.0), 0.2, 2.5);
-      const vvmNorm = clamp(s.vvm / (this.scaleL >= 500 ? 0.21 : 1.2), 0.15, 2.5);
+      const rpmNorm = clamp(s.rpm / (this.scaleL >= 500 ? 134.8 : 450.0), 0.2, 2.5);
+      const vvmNorm = clamp(s.vvm / (this.scaleL >= 500 ? 0.2052 : 1.2), 0.15, 2.5);
       const feedNorm = clamp(s.F / (0.15 * (this.scaleL / 5.0)), 0.0, 2.0);
       const xvNorm = clamp(s.X_v / 35.0, 0.0, 1.0);
       const doLow = s.DO_pct < 20.0;
-      const highShear = s.v_tip > 1.75;
+      const highShear = s.v_tip > 1.65;
 
       if (this.backend === "webgl") {
         if (!this.orbit.dragging) {
@@ -858,7 +858,7 @@
           this.feedPipeMat.emissiveIntensity = hz === "feed" ? 0.55 : 0.0;
         }
 
-        if (hz === "impeller" || s.v_tip > 2.15) {
+        if (hz === "impeller" || s.v_tip > 2.45) {
           this.shearMat.color.setHex(hz === "impeller" ? 0xb45309 : 0xb91c1c);
           this.shearMat.opacity = hz === "impeller" ? 0.56 + 0.14 * Math.sin(this._highlightPulse) : 0.46;
         } else if (highShear) {

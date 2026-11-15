@@ -288,24 +288,39 @@
   }
 
   function predictGamPointFast(X_v, X_d, S, C_L, A, vTip, muMech, bundle) {
-    const theta = bundle.gam86.weights;
+    const members = bundle.gam86.ensemble_weights || [bundle.gam86.weights];
     const vtipOnset = bundle.constants.vtip_onset;
     const klaScales = bundle.constants.kla_scales;
     const xtPos = Math.max(0.0, X_v) + Math.max(0.0, X_d);
-    const res = evalGamHeads(theta, xtPos, S, C_L, A, vTip, muMech, vtipOnset, klaScales);
-    let dkd = res[0];
-    const etaKla = res[1];
-    let qp = res[2];
-    let qc = res[3];
-    let emu = res[4];
+    const B = members.length;
+
+    // True B=15 output-space bootstrap aggregation across all ensemble replicates
+    let dkd = 0.0, etaKla = 0.0, qp = 0.0, qc = 0.0, emu = 0.0;
+    for (let b = 0; b < B; b++) {
+      const res = evalGamHeads(members[b], xtPos, S, C_L, A, vTip, muMech, vtipOnset, klaScales);
+      dkd += res[0];
+      etaKla += res[1];
+      qp += res[2];
+      qc += res[3];
+      emu += res[4];
+    }
+    dkd /= B;
+    etaKla /= B;
+    qp /= B;
+    qc /= B;
+    emu /= B;
 
     const dov = computeSubspaceDoV(xtPos, S, C_L, A, vTip, bundle);
     const exKd = Math.max(0.0, dov.d_m_kd - dov.p99_kd);
+    const exKla = Math.max(0.0, dov.d_m_kla - dov.p99_global);
     const exMet = Math.max(0.0, dov.d_m_met - dov.p99_met);
     const wKd = Math.exp(-0.5 * Math.pow(exKd / Math.max(0.5, 0.5 * dov.p99_kd), 2));
+    const wKla = Math.exp(-0.5 * Math.pow(exKla / Math.max(0.5, 0.5 * dov.p99_global), 2));
     const wMet = Math.exp(-0.5 * Math.pow(exMet / Math.max(0.35, 0.35 * dov.p99_met), 2));
+    const ekPrior = 1.0 / (1.0 + Math.pow(xtPos / 24.0, 1.85));
 
     dkd *= wKd;
+    etaKla = wKla * etaKla + (1.0 - wKla) * ekPrior;
     qp *= wMet;
     qc *= wMet;
     emu = wMet * emu + (1.0 - wMet);
@@ -320,19 +335,11 @@
   }
 
   function predictGamWithUQ(X_v, X_d, S, C_L, A, vTip, muMech, bundle) {
-    const thetaMain = bundle.gam86.weights;
-    const members = bundle.gam86.ensemble_weights;
+    const members = bundle.gam86.ensemble_weights || [bundle.gam86.weights];
     const vtipOnset = bundle.constants.vtip_onset;
     const klaScales = bundle.constants.kla_scales;
     const xtPos = Math.max(0.0, X_v) + Math.max(0.0, X_d);
     const B = members.length;
-
-    const pt = evalGamHeads(thetaMain, xtPos, S, C_L, A, vTip, muMech, vtipOnset, klaScales);
-    let dkdM = pt[0];
-    const ekM = pt[1];
-    let qpM = pt[2];
-    let qcM = pt[3];
-    let emuM = pt[4];
 
     const kdArr = new Float64Array(B);
     const ekArr = new Float64Array(B);
@@ -360,21 +367,26 @@
         vQc += (qcArr[b] - mQc) * (qcArr[b] - mQc);
         vMu += (muArr[b] - mMu) * (muArr[b] - mMu);
       }
-      vKd /= B; vEk /= B; vQp /= B; vQc /= B; vMu /= B;
+      // Bessel-corrected sample variance across B bootstrap replicates
+      const denom = B - 1;
+      vKd /= denom; vEk /= denom; vQp /= denom; vQc /= denom; vMu /= denom;
     }
 
     const dov = computeSubspaceDoV(xtPos, S, C_L, A, vTip, bundle);
     const exKd = Math.max(0.0, dov.d_m_kd - dov.p99_kd);
-    const exKla = Math.max(0.0, dov.d_m_kla - dov.p99_kla);
+    const exKla = Math.max(0.0, dov.d_m_kla - dov.p99_global);
     const exMet = Math.max(0.0, dov.d_m_met - dov.p99_met);
 
     const wKd = Math.exp(-0.5 * Math.pow(exKd / Math.max(0.5, 0.5 * dov.p99_kd), 2));
+    const wKla = Math.exp(-0.5 * Math.pow(exKla / Math.max(0.5, 0.5 * dov.p99_global), 2));
     const wMet = Math.exp(-0.5 * Math.pow(exMet / Math.max(0.35, 0.35 * dov.p99_met), 2));
+    const ekPrior = 1.0 / (1.0 + Math.pow(xtPos / 24.0, 1.85));
 
-    dkdM *= wKd;
-    qpM *= wMet;
-    qcM *= wMet;
-    emuM = wMet * emuM + (1.0 - wMet);
+    const dkdM = wKd * mKd;
+    const ekM = wKla * mEk + (1.0 - wKla) * ekPrior;
+    const qpM = wMet * mQp;
+    const qcM = wMet * mQc;
+    const emuM = wMet * mMu + (1.0 - wMet);
 
     const rKd = clamp(exKd / Math.max(1.0, dov.p99_kd), 0.0, 2.0);
     const rKla = clamp(exKla / Math.max(1.0, dov.p99_kla), 0.0, 2.0);
@@ -386,6 +398,7 @@
       q_A_prod: qpM,
       q_A_cons: qcM,
       eta_mu: emuM,
+      member_eta_kla: Array.from(ekArr),
       std_kd: Math.sqrt(vKd + Math.pow(0.002 + 0.015 * rKd, 2)),
       std_kla: Math.sqrt(vEk + Math.pow(0.025 + 0.065 * Math.min(1.0, rKla) * (1.0 - ekM), 2)),
       std_qp: Math.sqrt(vQp + Math.pow(0.002 + 0.015 * rMet, 2)),
@@ -916,14 +929,9 @@
   }
 
   function closedLoopControl(t, xHat, cfg, params, bundle, scaleFactor) {
-    const [rpmNow, vvmNow] = disturbanceProfile(
-      cfg.disturbanceMode,
-      t,
-      cfg.rpm,
-      cfg.vvm,
-      params.S_feed,
-      scaleFactor
-    );
+    // Controller uses commanded DCS setpoints (zero oracle knowledge of actuator faults)
+    const rpmNow = cfg.rpm;
+    const vvmNow = cfg.vvm;
 
     const X_v = Math.max(0.05, xHat[0]);
     const S = Math.max(0.0, xHat[2]);
@@ -955,13 +963,22 @@
     const aLimit = 1.8;
     const sSet = 0.25;
     const aceThrottle = Math.max(0.35, 1.0 - Math.max(0.0, A - 0.55 * aLimit) / Math.max(0.25, aLimit));
-    const o2Guard = clamp((C_L - 1.0) / 1.8, 0.35, 1.0);
+    const o2Guard = clamp((C_L - 0.8) / 1.0, 0.30, 1.0);
     const o2Av = C_L / (0.005 + C_L);
-    const otrAvail = (rHat.k_La * Math.max(0.0, params.C_star - Math.max(C_L, 2.2))) / 1000.0;
+    const cFloor = 2.18;
+    const otrAvail = (rHat.k_La * Math.max(0.0, params.C_star - cFloor)) / 1000.0;
     const muOtrCap = Math.max(0.03, params.Y_XO * (otrAvail / Math.max(0.1, X_v) - params.m_o * o2Av));
     const muSp = Math.min(cfg.muTarget * aceThrottle * o2Guard, muCap, muOtrCap);
 
-    const sSp = Math.max(0.08, sSet * Math.max(0.35, 1.0 - Math.max(0.0, A - 0.7 * aLimit) / Math.max(0.5, aLimit)));
+    const sMonodTarget = clamp(
+      (params.K_S * muSp) / Math.max(0.08, params.mu_max * inhibO2 * etaMuHat - muSp),
+      0.05,
+      sSet
+    );
+    const sSp = Math.min(
+      sMonodTarget,
+      Math.max(0.05, sSet * Math.max(0.35, 1.0 - Math.max(0.0, A - 0.7 * aLimit) / Math.max(0.5, aLimit)))
+    );
     const sAvSp = sSp / (0.002 + sSp);
     const qPSp = (params.alpha * muSp + params.beta) * sAvSp * o2Av;
     const qSSp =
@@ -970,7 +987,7 @@
       qPSp / params.Y_PS +
       rHat.q_A_prod / params.Y_AS;
 
-    const gainS = S <= sSp ? 1.6 : 2.4;
+    const gainS = S <= sSp ? 0.55 : 2.4;
     const demandGh = qSSp * X_v * V + gainS * (sSp - S) * V;
     const Fcmd = clamp(demandGh / Math.max(10.0, params.S_feed - S), 0.0, cfg.F_max);
     return { F: Fcmd, rpm: rpmNow, vvm: vvmNow, S_feed: null };
@@ -1067,9 +1084,9 @@
       const ti = Number((i * dtStep).toFixed(2));
       t[i] = ti;
       const uCmd = closedLoopControl(ti, ekfHyb.x, cfg, pModel, bundle, scaleFactor);
-      inputs[i] = [uCmd.F, uCmd.rpm, uCmd.vvm];
 
-      const [, , sFeedPlant] = disturbanceProfile(
+      // Plant experiences physical actuator/feed faults; EKF models remain blind (commanded uModel)
+      const [rpmPlant, vvmPlant, sFeedPlant] = disturbanceProfile(
         cfg.disturbanceMode,
         ti,
         uCmd.rpm,
@@ -1077,7 +1094,8 @@
         pPlant.S_feed,
         scaleFactor
       );
-      const uPlant = { F: uCmd.F, rpm: uCmd.rpm, vvm: uCmd.vvm, S_feed: sFeedPlant };
+      inputs[i] = [uCmd.F, rpmPlant, vvmPlant];
+      const uPlant = { F: uCmd.F, rpm: rpmPlant, vvm: vvmPlant, S_feed: sFeedPlant };
       const uModel = { F: uCmd.F, rpm: uCmd.rpm, vvm: uCmd.vvm, S_feed: null };
 
       const rt = computeRates(xTrue, uPlant, pPlant, "ground_truth", bundle, false);
@@ -1140,8 +1158,7 @@
     const tEnd = durationH;
     t[nSteps] = tEnd;
     const uEnd = closedLoopControl(tEnd, ekfHyb.x, cfg, pModel, bundle, scaleFactor);
-    inputs[nSteps] = [uEnd.F, uEnd.rpm, uEnd.vvm];
-    const [, , sFeedEnd] = disturbanceProfile(
+    const [rpmEndPlant, vvmEndPlant, sFeedEnd] = disturbanceProfile(
       cfg.disturbanceMode,
       tEnd,
       uEnd.rpm,
@@ -1149,7 +1166,8 @@
       pPlant.S_feed,
       scaleFactor
     );
-    const rtE = computeRates(xTrue, { F: uEnd.F, rpm: uEnd.rpm, vvm: uEnd.vvm, S_feed: sFeedEnd }, pPlant, "ground_truth", bundle, false);
+    inputs[nSteps] = [uEnd.F, rpmEndPlant, vvmEndPlant];
+    const rtE = computeRates(xTrue, { F: uEnd.F, rpm: rpmEndPlant, vvm: vvmEndPlant, S_feed: sFeedEnd }, pPlant, "ground_truth", bundle, false);
     const rhE = computeRates(ekfHyb.x, uEnd, pModel, "hybrid", bundle, true);
     const rnE = computeRates(ekfNom.x, uEnd, pModel, "nominal", bundle, false);
 
