@@ -1,0 +1,287 @@
+"""MCP Server exposing hybrid-fedbatch-twin physics, EKF, ALCOA+ replay, and Uhlendorff CHO-K1 data."""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+from typing import Any, Dict, List, Literal, Optional
+from uuid import uuid4
+
+import numpy as np
+import pandas as pd
+from mcp.server.mcpserver import MCPServer
+
+from api.db import create_db_engine_and_sessionmaker, load_twin_session, save_twin_session
+from api.runtime import (
+    ROOT_DIR,
+    create_twin_instance,
+    load_calibrated_assets,
+    scale_feed_cap,
+    scale_params,
+    state_dict_from_vector,
+)
+from hybrid_fedbatch_twin.controller import ClosedLoopFeedController
+from hybrid_fedbatch_twin.mechanistic import default_initial_state, simulate_bioreactor
+
+UHLENDORFF_DATA_DIR = ROOT_DIR / "data" / "uhlendorff_2026" / "Time-axis aligned raw data tables"
+UHLENDORFF_ARTIFACT = ROOT_DIR / "artifacts" / "uhlendorff_2026_validation.json"
+
+mcp = MCPServer("hybrid-fedbatch-twin")
+
+_DB_CACHE: Dict[str, Any] = {}
+
+
+def _get_sessionmaker(database_url: Optional[str] = None):
+    url = database_url or os.environ.get("DATABASE_URL") or "sqlite:///./hybrid_twin_ledger.db"
+    if url not in _DB_CACHE:
+        engine, SessionLocal = create_db_engine_and_sessionmaker(url)
+        _DB_CACHE[url] = (engine, SessionLocal)
+    return _DB_CACHE[url][1]
+
+
+@mcp.tool()
+def simulate_fedbatch_run(
+    vessel_scale_L: Literal[5, 50, 1000] = 5,
+    duration_h: float = 16.0,
+    mode: Literal["hybrid", "nominal", "ground_truth"] = "hybrid",
+    mu_target: float = 0.28,
+    rpm: float = 450.0,
+    vvm: float = 1.2,
+    disturbance_mode: Literal["none", "aeration_drop", "feed_step"] = "none",
+    dt_eval: float = 0.2,
+) -> Dict[str, Any]:
+    """Run deterministic fed-batch ODE simulation using GAM-86 / Monod kinetics at 5L, 50L, or 1000L."""
+    base_params, model = load_calibrated_assets()
+    p_scaled = scale_params(vessel_scale_L, base_params)
+    x0 = default_initial_state(p_scaled)
+    ctrl = ClosedLoopFeedController(
+        params=p_scaled,
+        residual_model=model,
+        mu_target=mu_target,
+        rpm=rpm,
+        vvm=vvm,
+        F_max=scale_feed_cap(vessel_scale_L),
+        disturbance_mode=disturbance_mode,
+    )
+    sim = simulate_bioreactor(
+        t_span=(0.0, duration_h),
+        x0=x0,
+        control_fn=ctrl,
+        params=p_scaled,
+        mode=mode,
+        residual_model=model if mode == "hybrid" else None,
+        dt_eval=dt_eval,
+    )
+    return {
+        "vessel_scale_L": int(vessel_scale_L),
+        "mode": mode,
+        "duration_h": float(duration_h),
+        "n_points": int(len(sim["t"])),
+        "final_state": {
+            "X_v_g_L": float(sim["X_v"][-1]),
+            "X_d_g_L": float(sim["X_d"][-1]),
+            "S_g_L": float(sim["S"][-1]),
+            "DO_pct": float(sim["DO_pct"][-1]),
+            "A_g_L": float(sim["A"][-1]),
+            "P_g_L": float(sim["P"][-1]),
+            "V_L": float(sim["V"][-1]),
+        },
+        "peak_acetate_g_L": float(np.max(sim["A"])),
+        "min_DO_pct": float(np.min(sim["DO_pct"])),
+        "trajectory_tail": [
+            {
+                "t_h": float(sim["t"][i]),
+                "X_v": float(sim["X_v"][i]),
+                "S": float(sim["S"][i]),
+                "DO_pct": float(sim["DO_pct"][i]),
+                "A": float(sim["A"][i]),
+                "P": float(sim["P"][i]),
+                "V": float(sim["V"][i]),
+            }
+            for i in range(max(0, len(sim["t"]) - 5), len(sim["t"]))
+        ],
+    }
+
+
+@mcp.tool()
+def ingest_pat_and_estimate_state(
+    t_h: float,
+    y_Xv: float,
+    y_CL: float,
+    y_V: float,
+    F_act: float,
+    rpm_act: float = 450.0,
+    vvm_act: float = 1.2,
+    session_id: Optional[str] = None,
+    vessel_scale_L: Literal[5, 50, 1000] = 5,
+    batch_id: str = "FB-BL21-MCP-001",
+    operator_id: str = "mcp_agent",
+    database_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Run Continuous-Discrete expm EKF update on online PAT telemetry and return Mahalanobis DoV status."""
+    SessionLocal = _get_sessionmaker(database_url)
+    _, model = load_calibrated_assets()
+    sid = session_id or uuid4().hex[:16]
+
+    with SessionLocal() as db:
+        loaded = load_twin_session(db, sid, model)
+        if loaded is None:
+            twin = create_twin_instance(
+                vessel_scale_L=vessel_scale_L,
+                batch_id=batch_id,
+                operator_id=operator_id,
+            )
+            scale_l = int(vessel_scale_L)
+        else:
+            twin = loaded["twin"]
+            scale_l = int(loaded["vessel_scale_L"])
+
+        res = twin.ingest_online_pat(
+            t_h=t_h,
+            y_Xv=y_Xv,
+            y_CL=y_CL,
+            y_V=y_V,
+            F_act=F_act,
+            rpm_act=rpm_act,
+            vvm_act=vvm_act,
+        )
+        save_twin_session(db, sid, scale_l, twin)
+
+    return {
+        "session_id": sid,
+        "vessel_scale_L": scale_l,
+        "t_h": float(res["t_h"]),
+        "x_hat": state_dict_from_vector(res["x_hat"]),
+        "x_std": state_dict_from_vector(res["x_std"]),
+        "mu_hat": float(res["mu_hat"]),
+        "k_La_hat": float(res["k_La_hat"]),
+        "k_d_hat": float(res["k_d_hat"]),
+        "q_A_net_hat": float(res["q_A_net_hat"]),
+        "d_m": float(res["d_m"]),
+        "in_domain": bool(res["in_domain"]),
+        "nis": float(res["nis"]),
+    }
+
+
+@mcp.tool()
+def replay_delayed_lims_assay(
+    session_id: str,
+    t_sample_h: float,
+    y_S: float,
+    y_A: float,
+    y_P: Optional[float] = None,
+    database_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Execute retrodictive EKF replay for a delayed at-line LIMS sample and return signed ALCOA+ record."""
+    SessionLocal = _get_sessionmaker(database_url)
+    _, model = load_calibrated_assets()
+
+    with SessionLocal() as db:
+        loaded = load_twin_session(db, session_id, model)
+        if loaded is None:
+            raise ValueError(f"Twin session '{session_id}' does not exist in persistence ledger.")
+        twin = loaded["twin"]
+        replay = twin.ingest_atline_assay(
+            t_sample_h=t_sample_h,
+            y_S=y_S,
+            y_A=y_A,
+            y_P=y_P,
+        )
+        save_twin_session(db, session_id, loaded["vessel_scale_L"], twin)
+        audit = twin.to_audit_record()
+
+    return {
+        "session_id": session_id,
+        "t_now": float(replay["t_now"]),
+        "t_sample_h": float(replay["t_sample_h"]),
+        "replayed_steps": int(replay["replayed_steps"]),
+        "x_hat": state_dict_from_vector(replay["x_hat"]),
+        "x_std": state_dict_from_vector(replay["x_std"]),
+        "d_m": float(replay["d_m"]),
+        "in_domain": bool(replay["in_domain"]),
+        "alcoa_record": audit,
+    }
+
+
+@mcp.tool()
+def search_uhlendorff_campaigns(
+    mode: Optional[Literal["batch", "fed-batch"]] = None,
+    campaign_id: Optional[str] = None,
+    split: Optional[Literal["dev", "test"]] = None,
+    max_wmse: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Query the 24 wet-lab CHO-K1 runs in data/uhlendorff_2026/ and artifacts/uhlendorff_2026_validation.json."""
+    validation: Dict[str, Any] = {}
+    if UHLENDORFF_ARTIFACT.exists():
+        with UHLENDORFF_ARTIFACT.open("r", encoding="utf-8") as f:
+            validation = json.load(f)
+
+    meta = validation.get("dataset_metadata", {})
+    dev_campaigns = set(meta.get("dev_campaigns", []))
+    test_campaigns = set(meta.get("test_campaigns", []))
+    bench = validation.get("benchmark_comparison", {}).get("remediated", {})
+    held_out = validation.get("held_out_trajectories", {})
+
+    runs: List[Dict[str, Any]] = []
+    if UHLENDORFF_DATA_DIR.exists():
+        offline_files = sorted(UHLENDORFF_DATA_DIR.glob("*_offline.csv"))
+        for path in offline_files:
+            parts = path.name.split("_")
+            exp_id = parts[0]
+            run_mode = "fed-batch" if "fed-batch" in path.name else "batch"
+            rep_id = "R01" if "_R01_" in path.name else "R02"
+            run_split = "test" if exp_id in test_campaigns else "dev"
+
+            if campaign_id and exp_id.upper() != campaign_id.upper():
+                continue
+            if mode and run_mode != mode:
+                continue
+            if split and run_split != split:
+                continue
+
+            wmse_val: Optional[float] = None
+            if exp_id == "EXP012" and "exp012_wmse" in bench:
+                wmse_val = float(bench["exp012_wmse"])
+            elif exp_id == "EXP009" and "exp009_wmse" in bench:
+                wmse_val = float(bench["exp009_wmse"])
+            elif exp_id == "EXP011" and "exp011_unmasked_wmse" in bench:
+                wmse_val = float(bench["exp011_unmasked_wmse"])
+
+            if max_wmse is not None and (wmse_val is None or wmse_val > max_wmse):
+                continue
+
+            df = pd.read_csv(path)
+            t_col = next((c for c in df.columns if "time" in c.lower()), df.columns[0])
+            vcd_col = next((c for c in df.columns if "vcd" in c.lower()), None)
+            glc_col = next((c for c in df.columns if "glc" in c.lower()), None)
+            lac_col = next((c for c in df.columns if "lac" in c.lower()), None)
+
+            runs.append(
+                {
+                    "campaign_id": exp_id,
+                    "replicate": rep_id,
+                    "mode": run_mode,
+                    "split": run_split,
+                    "offline_file": path.name,
+                    "n_offline_rows": int(len(df)),
+                    "duration_h": float(df[t_col].dropna().max()) if len(df) else 0.0,
+                    "peak_vcd_1e6_mL": float(df[vcd_col].dropna().max()) if vcd_col else None,
+                    "max_glc_g_L": float(df[glc_col].dropna().max()) if glc_col else None,
+                    "peak_lac_g_L": float(df[lac_col].dropna().max()) if lac_col else None,
+                    "validation_wmse": wmse_val,
+                    "has_heldout_trajectory": exp_id in held_out,
+                }
+            )
+
+    return {
+        "source": meta.get("source", "Uhlendorff et al. (2026) CHO-K1"),
+        "matched_runs_count": len(runs),
+        "remediated_pooled_test_wmse": bench.get("pooled_test_wmse"),
+        "remediated_ci_coverage_pct": bench.get("ci_coverage_pct"),
+        "runs": runs,
+    }
+
+
+if __name__ == "__main__":
+    mcp.run()

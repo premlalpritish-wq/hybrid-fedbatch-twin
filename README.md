@@ -19,30 +19,42 @@ A grey-box bioprocess digital twin for recombinant *E. coli* BL21 fed-batch ferm
 - `hybrid_fedbatch_twin/estimator.py`: Continuous-Discrete EKF (`scipy.linalg.expm` + `Q_epistemic`), blind fault detection, and ALCOA+ SHA-256 audit serialization (`BioreactorDigitalTwin.to_audit_record`).
 - `hybrid_fedbatch_twin/controller.py`: Closed-loop `mu-stat` feedforward + PI feed controller with oxygen transfer ceiling and acetate overflow backoff.
 - `hybrid_fedbatch_twin/cli.py`: Reproducible CLI benchmark and JSON report exporter.
+- `api/`: Production FastAPI + Pydantic v2 Digital Twin service (`api/main.py`, `api/schemas.py`, `api/runtime.py`) backed by SQLAlchemy ALCOA+ persistence (`api/db.py`, configurable via `DATABASE_URL` for PostgreSQL or local SQLite). Exposes twin initialization (`5 L`/`50 L`/`1000 L`), online PAT ingestion, delayed LIMS replay, closed-loop control, ALCOA+ SHA-256 audit retrieval, and CAPA deviation investigation (`POST /twins/{session_id}/investigate`).
+- `mcp_server/server.py`: Model Context Protocol (`MCPServer`) server exposing deterministic bioprocess tools (`simulate_fedbatch_run`, `ingest_pat_and_estimate_state`, `replay_delayed_lims_assay`, `search_uhlendorff_campaigns`) so LLM agents delegate all ODE, EKF, and CHO-K1 empirical lookups to verified solvers.
+- `agents/deviation_graph.py` & `agents/observability.py`: 4-step stateful Bioprocess Deviation & CAPA Investigator graph (`detect_excursion` -> `run_counterfactual_controls` -> `retrieve_empirical_precedent` -> `synthesize_capa_report`) with structured node/tool latency tracing and deterministic faithfulness evaluation (`evaluate_capa_report`).
 - `app.py`: Streamlit Operator (`5 L`) and Validation Benchmark (`1000 L`) console.
 - `scripts/export_web_twin_assets.py`: Exports verified Stage-1, Stage-2, disturbance, AIC/BIC, and `1000 L` benchmark artifacts into `docs/assets/`.
-- `docs/`: Zero-backend Three.js + Canvas interactive 3D digital twin and engineering case-study site deployed via GitHub Pages.
-- `tests/test_hybrid_twin.py`: Automated `8/8` verification suite.
+- `docs/`: Zero-backend Three.js + Canvas interactive 3D digital twin and Distill-style engineering monograph deployed via GitHub Pages.
+- `tests/`: Automated `8/8` scientific verification suite (`tests/test_hybrid_twin.py`), FastAPI/DB/MCP suite (`tests/test_service_and_mcp.py`), and CAPA agent observability/faithfulness suite (`tests/test_agent_evals.py`).
+- `Dockerfile` & `.github/workflows/ci.yml`: Reproducible container build and automated CI verification on push/PR.
 - `agents/moritz_von_stosch_auditor.md`: Literature-grounded adversarial bioprocess audit persona specification.
 
-## Quickstart (Local Python)
+## Quickstart (Local Python, API, MCP & Docker)
 
 ```powershell
-# 1. Install dependencies
-pip install -e .
+# 1. Install core + service dependencies
+pip install -e ".[service,dev]"
 
-# 2. Run the 8-test verification suite (use single-threaded BLAS on Windows)
+# 2. Run fast service, persistence, MCP, and CAPA agent eval tests (<20s)
 $env:OMP_NUM_THREADS="1"; $env:MKL_NUM_THREADS="1"; $env:OPENBLAS_NUM_THREADS="1"
-pytest -v
+pytest tests/test_service_and_mcp.py tests/test_agent_evals.py -v
 
-# 3. Run the CLI calibration, EKF, and controller benchmark
+# 3. Run the full 8-test scientific verification suite
+pytest tests/test_hybrid_twin.py -v
+
+# 4. Launch the FastAPI + ALCOA+ Digital Twin service
+uvicorn api.main:app --host 0.0.0.0 --port 8000
+
+# 5. Run the MCP server (stdio)
+python -m mcp_server.server
+
+# 6. Or build and run via Docker
+docker build -t hybrid-fedbatch-twin .
+docker run -p 8000:8000 hybrid-fedbatch-twin
+
+# 7. Run the CLI benchmark or Streamlit console
 python -m hybrid_fedbatch_twin.cli --mode all --export-json results_summary.json
-
-# 4. Launch the interactive Streamlit console
 streamlit run app.py
-
-# 5. Re-export static web twin weights and benchmarks for docs/
-python -u scripts/export_web_twin_assets.py
 ```
 
 ## Notes & Disclaimers
