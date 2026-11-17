@@ -273,6 +273,51 @@ def search_uhlendorff_campaigns(
                     "has_heldout_trajectory": exp_id in held_out,
                 }
             )
+    else:
+        # Clean-checkout fallback: derive all 24 campaign-replicates from tracked validation artifact
+        all_exps = sorted(dev_campaigns | test_campaigns) or [f"EXP{i:03d}" for i in range(1, 13)]
+        for exp_id in all_exps:
+            ho_entry = held_out.get(exp_id, {})
+            run_mode = ho_entry.get("mode") or ("fed-batch" if exp_id in {"EXP010", "EXP011", "EXP012"} else "batch")
+            run_split = "test" if exp_id in test_campaigns else "dev"
+
+            if campaign_id and exp_id.upper() != campaign_id.upper():
+                continue
+            if mode and run_mode != mode:
+                continue
+            if split and run_split != split:
+                continue
+
+            wmse_val = None
+            if exp_id == "EXP012" and "exp012_wmse" in bench:
+                wmse_val = float(bench["exp012_wmse"])
+            elif exp_id == "EXP009" and "exp009_wmse" in bench:
+                wmse_val = float(bench["exp009_wmse"])
+            elif exp_id == "EXP011" and "exp011_unmasked_wmse" in bench:
+                wmse_val = float(bench["exp011_unmasked_wmse"])
+
+            if max_wmse is not None and (wmse_val is None or wmse_val > max_wmse):
+                continue
+
+            for rep_id, t_key, obs_key in (("R01", "t_off_r01", "obs_r01"), ("R02", "t_off_r02", "obs_r02")):
+                t_arr = ho_entry.get(t_key, [])
+                obs_arr = ho_entry.get(obs_key, [])
+                runs.append(
+                    {
+                        "campaign_id": exp_id,
+                        "replicate": rep_id,
+                        "mode": run_mode,
+                        "split": run_split,
+                        "offline_file": f"{exp_id}_{run_mode}_{rep_id}_offline.csv",
+                        "n_offline_rows": len(t_arr),
+                        "duration_h": float(max(t_arr)) if t_arr else None,
+                        "peak_vcd_1e6_mL": float(max(r[0] for r in obs_arr)) if obs_arr else None,
+                        "max_glc_g_L": float(max(r[1] for r in obs_arr)) if obs_arr else None,
+                        "peak_lac_g_L": float(max(r[2] for r in obs_arr)) if obs_arr else None,
+                        "validation_wmse": wmse_val,
+                        "has_heldout_trajectory": exp_id in held_out,
+                    }
+                )
 
     return {
         "source": meta.get("source", "Uhlendorff et al. (2026) CHO-K1"),

@@ -23,7 +23,7 @@ service = [
     "pydantic>=2.7.0",
     "sqlalchemy>=2.0.30",
     "uvicorn>=0.30.0",
-    "mcp>=1.2.0",
+    "mcp>=2.3.0",
 ]
 dev = [
     "httpx>=0.27.0",
@@ -35,7 +35,7 @@ hybrid-fedbatch-twin = "hybrid_fedbatch_twin.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["hybrid_fedbatch_twin*"]
+include = ["hybrid_fedbatch_twin*", "api*", "mcp_server*", "agents*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
