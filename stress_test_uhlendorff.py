@@ -66,6 +66,21 @@ class CHORun:
     v_inline: np.ndarray        # (N_inl,) liquid volume [L]
 
 
+def detect_biophysical_anomaly_mask(
+    y_obs: np.ndarray,
+    vcd_thresh: float = 0.05,
+    amm_thresh: float = 25.0,
+) -> np.ndarray:
+    """Detect sensor/assay collapse rows via biophysical invariants (zero viable cells with high ammonium)."""
+    arr = np.asarray(y_obs, dtype=float)
+    return (arr[:, 0] <= float(vcd_thresh)) & (arr[:, 3] > float(amm_thresh))
+
+
+def is_biophysical_anomaly_run(run: CHORun, min_anomalous_points: int = 2) -> bool:
+    """Return True if a cultivation run fails the biophysical sensor-consistency check."""
+    return int(np.sum(detect_biophysical_anomaly_mask(run.y_obs))) >= int(min_anomalous_points)
+
+
 def load_uhlendorff_dataset(c_glc_feed_est: float = 18.0) -> Tuple[List[CHORun], List[CHORun], Dict[str, int]]:
     """Ingest all 24 runs (48 CSVs) with strictly causal [t-0.5h, t] inline PAT alignment."""
     dev_runs: List[CHORun] = []
@@ -75,7 +90,11 @@ def load_uhlendorff_dataset(c_glc_feed_est: float = 18.0) -> Tuple[List[CHORun],
     anomaly_rows = 0
 
     for exp in DEV_EXPS + TEST_EXPS:
-        mode = "fed-batch" if exp in ("EXP010", "EXP011", "EXP012") else "batch"
+        mode = (
+            "fed-batch"
+            if os.path.isfile(os.path.join(DATA_DIR, f"{exp}_fed-batch_R01_offline.csv"))
+            else "batch"
+        )
         for rep in ("R01", "R02"):
             off = pd.read_csv(os.path.join(DATA_DIR, f"{exp}_{mode}_{rep}_offline.csv"))
             inl = pd.read_csv(os.path.join(DATA_DIR, f"{exp}_{mode}_{rep}_inline.csv"))
@@ -86,20 +105,23 @@ def load_uhlendorff_dataset(c_glc_feed_est: float = 18.0) -> Tuple[List[CHORun],
             lac = off["Lactate (g/L)"].values.astype(float)
             amm = off["Ammonium (mM)"].values.astype(float)
             y_obs = np.column_stack([vcd, glc, lac, amm])
-            anomaly_rows += int(np.sum((vcd <= 0.01) & (amm > 30.0)))
+            anomaly_rows += int(np.sum(detect_biophysical_anomaly_mask(y_obs)))
 
             t_inl = inl["Time (h)"].values.astype(float)
             v_inl = np.maximum(inl["Liquid volume (L)"].values.astype(float), 0.2)
             fw_inl = inl["Cumulative feed weight (g)"].fillna(0.0).values.astype(float)
 
             f_in_inl = np.zeros_like(t_inl)
+            t_feed_start = 1e9
             if mode == "fed-batch":
+                nz_feed = np.where(fw_inl > 0.5)[0]
+                t_feed_start = float(t_inl[int(nz_feed[0])]) if len(nz_feed) else 1e9
                 dt_inl = np.maximum(np.diff(t_inl, prepend=t_inl[0] - 1.0 / 60.0), 1e-4)
                 dfw = np.maximum(np.diff(fw_inl, prepend=fw_inl[0]), 0.0)
                 raw_f = (dfw * 0.001) / dt_inl
                 kernel = np.ones(30) / 30.0
                 f_smooth = np.convolve(raw_f, kernel, mode="full")[: len(raw_f)]
-                f_in_inl = np.where(t_inl >= 48.0, f_smooth, 0.0)
+                f_in_inl = np.where(t_inl >= t_feed_start, f_smooth, 0.0)
 
             pat_cols_all = SENSORS_7 + PAT_EXTRA
             pat_df = inl[pat_cols_all]
@@ -142,7 +164,7 @@ def load_uhlendorff_dataset(c_glc_feed_est: float = 18.0) -> Tuple[List[CHORun],
                 y_obs=y_obs,
                 v_grid=v_off,
                 f_in_offline=f_off,
-                t_feed_start=48.0 if mode == "fed-batch" else 1e9,
+                t_feed_start=t_feed_start if mode == "fed-batch" else 1e9,
                 c_glc_feed=c_glc_feed_est if mode == "fed-batch" else 0.0,
                 pat_features=pat_feat,
                 pat_valid_7=pat_valid_7,
@@ -164,11 +186,17 @@ def load_uhlendorff_dataset(c_glc_feed_est: float = 18.0) -> Tuple[List[CHORun],
     }
 
 
-def compute_duplicate_noise_floor(runs: Sequence[CHORun], exclude_exps: Sequence[str] = ()) -> np.ndarray:
-    """Compute Sigma_y = sqrt(0.5 * E[(x_R01 - x_R02)^2]) across duplicate pairs."""
+def compute_duplicate_noise_floor(
+    runs: Sequence[CHORun],
+    exclude_exps: Sequence[str] = (),
+    exclude_anomalous: bool = True,
+) -> np.ndarray:
+    """Compute Sigma_y = sqrt(0.5 * E[(x_R01 - x_R02)^2]) across clean duplicate pairs."""
+    anomalous_exps = {r.exp_id for r in runs if exclude_anomalous and is_biophysical_anomaly_run(r)}
+    excluded = set(exclude_exps) | anomalous_exps
     by_exp: Dict[str, Dict[str, CHORun]] = {}
     for r in runs:
-        if r.exp_id in exclude_exps:
+        if r.exp_id in excluded:
             continue
         by_exp.setdefault(r.exp_id, {})[r.rep_id] = r
     diffs = []
@@ -226,9 +254,7 @@ class PreparedCHOBatch:
             y_pad[b_i, :m, :] = r.y_obs
             row_ok = np.all(np.isfinite(r.y_obs), axis=1)
             if mask_anomalies:
-                # Biophysical anomaly gate: VCD <= 0.05 with Amm > 25 mM (e.g. EXP011_R02 sensor fault)
-                anom = (r.y_obs[:, 0] <= 0.05) & (r.y_obs[:, 3] > 25.0)
-                if np.sum(anom) >= 2:
+                if is_biophysical_anomaly_run(r):
                     row_ok[:] = False
             mask[b_i, :m] = row_ok
             pos = np.clip(r.t_eval / dt, 0.0, n_steps)
@@ -685,10 +711,10 @@ def run_pade_ekf_stress_test(
     dev_runs: Sequence[CHORun],
     test_runs: Sequence[CHORun],
 ) -> Dict[str, float]:
-    """Causal PAT -> VCD ridge observer + Continuous-Discrete Padé expm EKF."""
+    """Causal PAT -> VCD ridge observer + Continuous-Discrete unclipped Padé expm EKF."""
     x_pat_list, y_vcd_list = [], []
     for r in dev_runs:
-        if r.exp_id == "EXP011":
+        if is_biophysical_anomaly_run(r):
             continue
         valid = r.pat_valid_7
         if np.any(valid):
@@ -703,7 +729,7 @@ def run_pade_ekf_stress_test(
     w_pat = np.linalg.solve(x_pat_norm.T @ x_pat_norm + np.eye(5), x_pat_norm.T @ y_vcd)
     pat_rmse_dev = float(np.sqrt(np.mean((x_pat_norm @ w_pat - y_vcd) ** 2)))
 
-    th_mean = np.mean(np.stack(twin.ensemble_thetas, axis=0), axis=0)[None, :]
+    ths_ens = np.stack(twin.ensemble_thetas, axis=0)
     q_base = np.diag([0.04, 0.02, 0.02, 0.04])
     r_meas = np.array([[max(pat_rmse_dev ** 2, 1.0)]])
     h_mat = np.array([[1.0, 0.0, 0.0, 0.0]])
@@ -725,16 +751,22 @@ def run_pade_ekf_stress_test(
             f_in = float(np.nanmean(r.f_in_inline[win_f])) if np.any(win_f) else 0.0
 
             def rhs(xv: np.ndarray) -> np.ndarray:
-                x_b = xv[None, None, :]
-                mu, kd, qg_t, ql_p, ql_c, qa = twin.hybrid_rates_multi(x_b, th_mean)
+                x_b = np.broadcast_to(xv[None, None, :], (len(ths_ens), 1, 4))
+                mu_k, kd_k, qg_k, qlp_k, qlc_k, qa_k = twin.hybrid_rates_multi(x_b, ths_ens)
+                mu = float(np.mean(mu_k))
+                kd = float(np.mean(kd_k))
+                qg_t = float(np.mean(qg_k))
+                ql_p = float(np.mean(qlp_k))
+                ql_c = float(np.mean(qlc_k))
+                qa = float(np.mean(qa_k))
                 d_r = f_in / max(vol, 0.2)
                 g_s = max(xv[1], 0.0) / (max(xv[1], 0.0) + 0.05)
                 l_s = max(xv[2], 0.0) / (max(xv[2], 0.0) + 0.1)
                 return np.array([
-                    (float(mu[0, 0]) - float(kd[0, 0]) - d_r) * xv[0],
-                    float(qg_t[0, 0]) * g_s * xv[0] + d_r * (r.c_glc_feed - xv[1]),
-                    (float(ql_p[0, 0]) - float(ql_c[0, 0]) * l_s) * xv[0] - d_r * xv[2],
-                    float(qa[0, 0]) * xv[0] - d_r * xv[3],
+                    (mu - kd - d_r) * xv[0],
+                    qg_t * g_s * xv[0] + d_r * (r.c_glc_feed - xv[1]),
+                    (ql_p - ql_c * l_s) * xv[0] - d_r * xv[2],
+                    qa * xv[0] - d_r * xv[3],
                 ])
 
             k1 = rhs(x)
@@ -750,7 +782,7 @@ def run_pade_ekf_stress_test(
                 xm[j] = max(0.0, xm[j] - eps)
                 f_jac[:, j] = (rhs(xp) - rhs(xm)) / max(xp[j] - xm[j], 1e-8)
 
-            phi = expm(np.clip(f_jac * dt, -10.0, 10.0))
+            phi = expm(f_jac * dt)
             p_cov = 0.5 * (phi @ p_cov @ phi.T + q_base * dt + (phi @ p_cov @ phi.T + q_base * dt).T)
             x = x_pred
             vol = float(np.interp(t1, r.t_inline, r.v_inline))
@@ -819,21 +851,21 @@ def main() -> None:
     print("=" * 78, flush=True)
 
     dev_runs, test_runs, stats = load_uhlendorff_dataset(c_glc_feed_est=18.0)
-    sigma_y_clean = compute_duplicate_noise_floor(dev_runs, exclude_exps=("EXP011",))
-    sigma_y_unmasked = compute_duplicate_noise_floor(dev_runs, exclude_exps=())
+    sigma_y_clean = compute_duplicate_noise_floor(dev_runs, exclude_anomalous=True)
+    sigma_y_unmasked = compute_duplicate_noise_floor(dev_runs, exclude_anomalous=False)
+    anomalous_run_ids = [f"{r.exp_id}_{r.rep_id}" for r in dev_runs if is_biophysical_anomaly_run(r)]
+    dev_clean = [r for r in dev_runs if not is_biophysical_anomaly_run(r)]
 
-    print(f"[Gate 1] Dev Campaigns (9 EXPs = {len(dev_runs)} runs): {DEV_EXPS}", flush=True)
-    print(f"[Gate 1] Held-Out Test (3 EXPs = {len(test_runs)} runs): {TEST_EXPS}", flush=True)
-    print(f"[Gate 1] Duplicate Noise Floor Sigma_y (clean 8 Dev EXPs): {np.round(sigma_y_clean, 4)} -> [VCD, Glc, Lac, Amm]", flush=True)
-    print(f"[Gate 1] Duplicate Noise Floor Sigma_y (unmasked w/ EXP011): {np.round(sigma_y_unmasked, 4)}", flush=True)
+    print(f"[Gate 1] Dev Campaigns ({len(DEV_EXPS)} EXPs = {len(dev_runs)} runs): {DEV_EXPS}", flush=True)
+    print(f"[Gate 1] Held-Out Test ({len(TEST_EXPS)} EXPs = {len(test_runs)} runs): {TEST_EXPS}", flush=True)
+    print(f"[Gate 1] Duplicate Noise Floor Sigma_y (clean Dev): {np.round(sigma_y_clean, 4)} -> [VCD, Glc, Lac, Amm]", flush=True)
+    print(f"[Gate 1] Duplicate Noise Floor Sigma_y (unmasked): {np.round(sigma_y_unmasked, 4)}", flush=True)
     print(
         f"[Gate 2] Offline rows={stats['total_offline_rows']}, "
         f"Incomplete 7-sensor inline windows [t-0.5h,t]={stats['incomplete_7_sensor_rows']}, "
-        f"EXP011_R02 VCD=0/Amm=48.93mM anomaly rows={stats['anomaly_rows']}\n",
+        f"Flagged anomaly runs={anomalous_run_ids} (rows={stats['anomaly_rows']})\n",
         flush=True,
     )
-
-    dev_clean = [r for r in dev_runs if not (r.exp_id == "EXP011" and r.rep_id == "R02")]
 
     print("-" * 78, flush=True)
     print("STEP 2: Training `hybrid-fedbatch-twin` (Decoupled Mech + RBF Residual, K_eff=9, B=15)", flush=True)
@@ -844,7 +876,7 @@ def main() -> None:
     twin_clean.fit_stage2_bagged(dev_clean)
     print(f"OOB Epistemic Std Floor: {np.round(np.sqrt(twin_clean.oob_var), 4)}", flush=True)
 
-    print("\nTraining unmasked `hybrid-fedbatch-twin` (with EXP011_R02 anomaly, B=5)...", flush=True)
+    print(f"\nTraining unmasked `hybrid-fedbatch-twin` (with anomalous runs {anomalous_run_ids}, B=5)...", flush=True)
     twin_unmasked = HybridFedBatchTwinCHO(sigma_y=sigma_y_clean, b_ens=5, h_nodes=4, seed=42)
     twin_unmasked.fit_stage1(dev_runs)
     twin_unmasked.fit_stage2_bagged(dev_runs)
@@ -868,15 +900,30 @@ def main() -> None:
     m_ht_unm = compute_metrics(ht_unm_means, test_runs, twin_clean.weights_y)
     m_vs = compute_metrics(vs_means, test_runs, twin_clean.weights_y)
 
+    # Dynamic Stage-1 mechanistic-only baseline on held-out test set
+    test_batch_eval = PreparedCHOBatch.from_runs(test_runs, dt=0.5)
+    stage1_test_pred_pad = rollout_vectorized_patankar(test_batch_eval, mech_cho_rates_multi, twin_clean.p_mech[None, :])[0]
+    stage1_test_preds = [stage1_test_pred_pad[i, : len(r.t_eval), :] for i, r in enumerate(test_runs)]
+    m_stage1 = compute_metrics(stage1_test_preds, test_runs, twin_clean.weights_y)
+
     gamma_ht = twin_clean.compute_collinearity(dev_clean)
     gamma_vs = vs_base.compute_collinearity(dev_clean)
 
-    exp009_idx = [i for i, r in enumerate(test_runs) if r.exp_id == "EXP009"]
-    exp012_idx = [i for i, r in enumerate(test_runs) if r.exp_id == "EXP012"]
-    m_ht_009 = compute_metrics([ht_means[i] for i in exp009_idx], [test_runs[i] for i in exp009_idx], twin_clean.weights_y)
-    m_vs_009 = compute_metrics([vs_means[i] for i in exp009_idx], [test_runs[i] for i in exp009_idx], twin_clean.weights_y)
-    m_ht_012 = compute_metrics([ht_means[i] for i in exp012_idx], [test_runs[i] for i in exp012_idx], twin_clean.weights_y)
-    m_vs_012 = compute_metrics([vs_means[i] for i in exp012_idx], [test_runs[i] for i in exp012_idx], twin_clean.weights_y)
+    per_campaign_ht: Dict[str, Dict[str, object]] = {}
+    per_campaign_vs: Dict[str, Dict[str, object]] = {}
+    for exp_id in sorted({r.exp_id for r in test_runs}):
+        idxs = [i for i, r in enumerate(test_runs) if r.exp_id == exp_id]
+        per_campaign_ht[exp_id] = compute_metrics([ht_means[i] for i in idxs], [test_runs[i] for i in idxs], twin_clean.weights_y)
+        per_campaign_vs[exp_id] = compute_metrics([vs_means[i] for i in idxs], [test_runs[i] for i in idxs], twin_clean.weights_y)
+
+    fedbatch_test_exps = sorted({r.exp_id for r in test_runs if r.mode == "fed-batch"})
+    batch_test_exps = sorted({r.exp_id for r in test_runs if r.mode == "batch"})
+    fb_key = fedbatch_test_exps[0] if fedbatch_test_exps else sorted(per_campaign_ht.keys())[-1]
+    shift_key = batch_test_exps[-1] if batch_test_exps else sorted(per_campaign_ht.keys())[0]
+    m_ht_fb = per_campaign_ht[fb_key]
+    m_vs_fb = per_campaign_vs[fb_key]
+    m_ht_shift = per_campaign_ht[shift_key]
+    m_vs_shift = per_campaign_vs[shift_key]
 
     in_ci_ht = np.concatenate([(np.abs(r.y_obs - mu) <= 1.96 * sd).ravel() for r, mu, sd in zip(test_runs, ht_means, ht_stds)])
     in_ci_vs = np.concatenate([(np.abs(r.y_obs - mu) <= 1.96 * sd).ravel() for r, mu, sd in zip(test_runs, vs_means, vs_stds)])
@@ -889,7 +936,7 @@ def main() -> None:
     print(f"ADVERSARIAL STRESS-TEST REPORT (`@von_stosch_twin` Referee) [{time.perf_counter() - t_wall0:.1f}s]", flush=True)
     print("=" * 78, flush=True)
 
-    print("\n[Stress Test 1] Held-Out Generalization (6 Test Runs: EXP008, EXP009, EXP012)", flush=True)
+    print(f"\n[Stress Test 1] Held-Out Generalization ({len(test_runs)} Test Runs: {', '.join(TEST_EXPS)})", flush=True)
     print(f"{'State':<14s} | {'Sigma_y':>8s} | {'HT RMSE':>8s} | {'HT R2':>7s} | {'VS RMSE':>8s} | {'VS R2':>7s}", flush=True)
     print("-" * 68, flush=True)
     for i, nm in enumerate(STATE_NAMES):
@@ -905,15 +952,15 @@ def main() -> None:
     print(f"  hybrid-fedbatch-twin: K_eff = {twin_clean.n_ml} (decoupled Stage-2; Stage-1 priors locked), gamma_col = {gamma_ht:.2f} -> {'PASS' if gamma_ht < 20 else 'FAIL (OVER-PARAMETERIZED)'}", flush=True)
     print(f"  @von_stosch_twin    : K_eff = {vs_base.n_params}, gamma_col = {gamma_vs:.2f} -> {'PASS' if gamma_vs < 20 else 'FAIL'}", flush=True)
 
-    print("\n[Stress Test 3] Fed-Batch Transition (EXP012, t_feed=48h) & Positivity", flush=True)
+    print(f"\n[Stress Test 3] Fed-Batch Transition ({fb_key}) & Positivity", flush=True)
     print(f"  min(x_pred) across all rollouts: hybrid-fedbatch-twin = {m_ht['min_x']:.4f} | @von_stosch_twin = {m_vs['min_x']:.4f}", flush=True)
-    print(f"  EXP012 Test WMSE               : hybrid-fedbatch-twin = {m_ht_012['wmse']:.4f} | @von_stosch_twin = {m_vs_012['wmse']:.4f}", flush=True)
-    print(f"  EXP012 Glc/Lac RMSE            : HT = {np.round(m_ht_012['rmse'][1:3], 3)} | VS = {np.round(m_vs_012['rmse'][1:3], 3)}", flush=True)
+    print(f"  {fb_key} Test WMSE             : hybrid-fedbatch-twin = {m_ht_fb['wmse']:.4f} | @von_stosch_twin = {m_vs_fb['wmse']:.4f}", flush=True)
+    print(f"  {fb_key} Glc/Lac RMSE          : HT = {np.round(m_ht_fb['rmse'][1:3], 3)} | VS = {np.round(m_vs_fb['rmse'][1:3], 3)}", flush=True)
 
-    print("\n[Stress Test 4] EXP009 Heterogeneity Shift & EXP011_R02 Anomaly Survival", flush=True)
-    print(f"  EXP009 Shifted Batch WMSE      : hybrid-fedbatch-twin = {m_ht_009['wmse']:.4f} | @von_stosch_twin = {m_vs_009['wmse']:.4f}", flush=True)
-    print(f"  EXP011_R02 Anomaly Masked WMSE : {m_ht['wmse']:.4f}", flush=True)
-    print(f"  EXP011_R02 Anomaly Unmasked    : {m_ht_unm['wmse']:.4f} (degradation: {m_ht_unm['wmse'] - m_ht['wmse']:+.4f})", flush=True)
+    print(f"\n[Stress Test 4] {shift_key} Shift & Anomaly Survival ({anomalous_run_ids})", flush=True)
+    print(f"  {shift_key} Shifted Batch WMSE    : hybrid-fedbatch-twin = {m_ht_shift['wmse']:.4f} | @von_stosch_twin = {m_vs_shift['wmse']:.4f}", flush=True)
+    print(f"  Anomaly Masked WMSE            : {m_ht['wmse']:.4f}", flush=True)
+    print(f"  Anomaly Unmasked WMSE          : {m_ht_unm['wmse']:.4f} (degradation: {m_ht_unm['wmse'] - m_ht['wmse']:+.4f})", flush=True)
 
     print("\n[Stress Test 5] Epistemic B=15 Calibration & Pade EKF Dropout Resilience", flush=True)
     print(f"  95% CI Coverage (vs Test Obs)  : hybrid-fedbatch-twin = {cov_ht_pct:.2f}% | @von_stosch_twin = {cov_vs_pct:.2f}%", flush=True)
@@ -923,7 +970,7 @@ def main() -> None:
 
     s_gen = max(0.0, min(2.0, 2.0 * (1.0 - max(0.0, (m_ht["wmse"] - m_vs["wmse"]) / max(m_vs["wmse"], 1.0)))))
     s_id = 2.0 if gamma_ht < 20.0 else (1.0 if gamma_ht < 100.0 else 0.3)
-    s_pos = 2.0 if (m_ht["min_x"] >= 0.0 and m_ht_012["wmse"] < 30.0) else 1.0
+    s_pos = 2.0 if (m_ht["min_x"] >= 0.0 and m_ht_fb["wmse"] < 30.0) else 1.0
     s_anom = 2.0 if abs(m_ht_unm["wmse"] - m_ht["wmse"]) < 2.0 else (1.0 if m_ht_unm["wmse"] < 50.0 else 0.5)
     s_ekf = 2.0 if (ekf_res["ekf_nan_count"] == 0 and cov_ht_pct >= 50.0) else 1.0
     total_score = s_gen + s_id + s_pos + s_anom + s_ekf
@@ -933,29 +980,55 @@ def main() -> None:
     print("=" * 78, flush=True)
     print(f"  1. Held-Out Generalization vs Sparse Baseline : {s_gen:.2f} / 2.00", flush=True)
     print(f"  2. Structural Identifiability (gamma_col < 20): {s_id:.2f} / 2.00 (gamma_col={gamma_ht:.1f})", flush=True)
-    print(f"  3. Fed-Batch t=48h Mass Balance & Positivity  : {s_pos:.2f} / 2.00", flush=True)
-    print(f"  4. EXP009 Shift & EXP011_R02 Anomaly Survival : {s_anom:.2f} / 2.00", flush=True)
+    print(f"  3. Fed-Batch Mass Balance & Positivity        : {s_pos:.2f} / 2.00", flush=True)
+    print(f"  4. Shift & Biophysical Anomaly Survival       : {s_anom:.2f} / 2.00", flush=True)
     print(f"  5. Epistemic B=15 CI & Pade EKF Dropouts      : {s_ekf:.2f} / 2.00", flush=True)
     print("-" * 78, flush=True)
     verdict = "GO (PASS)" if total_score >= 7.0 else "CONDITIONAL / NO-GO (REMEDIATE COLLINEARITY & ANOMALY GUARD)"
     print(f"  FINAL SURVIVAL VERDICT: {total_score:.2f} / 10.00 -> {verdict}", flush=True)
     print("=" * 78, flush=True)
 
-    # Export deterministic wet-lab validation JSON + JS bundle for Chapter 6
+    # Export deterministic wet-lab validation JSON + JS bundle computed strictly from observed runs
     vol_series = {}
-    for target_exp in ("EXP010", "EXP012"):
-        pool = dev_runs if target_exp == "EXP010" else test_runs
-        r1 = next(r for r in pool if r.exp_id == target_exp and r.rep_id == "R01")
+    clean_fb_r1 = [r for r in (dev_clean + test_runs) if r.mode == "fed-batch" and r.rep_id == "R01"]
+    for r1 in clean_fb_r1:
         t_ds = np.linspace(0.0, float(r1.t_eval[-1]), 40)
         v_true = np.interp(t_ds, r1.t_inline, r1.v_inline)
         f_ds = np.interp(t_ds, r1.t_inline, r1.f_in_inline)
         dt_ds = t_ds[1] - t_ds[0]
         v_naive = float(r1.v_grid[0]) + np.cumsum(np.r_[0.0, 0.5 * (f_ds[:-1] + f_ds[1:]) * dt_ds])
-        vol_series[target_exp] = {
+        vol_series[r1.exp_id] = {
             "t": np.round(t_ds, 2).tolist(),
             "v_true": np.round(v_true, 4).tolist(),
             "v_naive": np.round(v_naive, 4).tolist(),
         }
+
+    # Dynamically compute mass balance & dev fit diagnostics from actual runs and model
+    dev_ht_means, _ = twin_clean.predict(dev_clean)
+    m_dev_after = compute_metrics(dev_ht_means, dev_clean, twin_clean.weights_y)
+    dev_batch_eval = PreparedCHOBatch.from_runs(dev_clean, dt=0.5)
+    dev_s1_pad = rollout_vectorized_patankar(dev_batch_eval, mech_cho_rates_multi, twin_clean.p_mech[None, :])[0]
+    dev_s1_preds = [dev_s1_pad[i, : len(r.t_eval), :] for i, r in enumerate(dev_clean)]
+    m_dev_before = compute_metrics(dev_s1_preds, dev_clean, twin_clean.weights_y)
+
+    fb_ref = clean_fb_r1[0]
+    dv_inl = np.diff(fb_ref.v_inline)
+    v_naive_ref = vol_series[fb_ref.exp_id]["v_naive"][-1]
+    mass_balance_summary = {
+        "reference_campaign": fb_ref.exp_id,
+        "v0": round(float(fb_ref.v_inline[0]), 4),
+        "v_end_true": round(float(fb_ref.v_inline[-1]), 4),
+        "v_end_naive": round(float(v_naive_ref), 4),
+        "sum_pos_dv": round(float(np.sum(dv_inl[dv_inl > 0.0])), 4),
+        "sum_neg_dv": round(float(np.sum(dv_inl[dv_inl < 0.0])), 4),
+        "n_samples": int(len(fb_ref.t_eval)),
+        "c_glc_feed_calibrated_g_per_L": float(fb_ref.c_glc_feed),
+        "dev_wmse_before": round(float(m_dev_before["wmse"]), 4),
+        "dev_wmse_after": round(float(m_dev_after["wmse"]), 4),
+        "dev_vcd_r2_after": round(float(m_dev_after["r2"][0]), 4),
+        "dev_glc_r2_after": round(float(m_dev_after["r2"][1]), 4),
+        "volume_series": vol_series,
+    }
 
     held_out_traj = {}
     for exp_id in TEST_EXPS:
@@ -981,40 +1054,20 @@ def main() -> None:
             "source": "Uhlendorff et al. (2026) CHO-K1 (10.5281/zenodo.20829178)",
             "dev_campaigns": DEV_EXPS,
             "test_campaigns": TEST_EXPS,
+            "anomalous_runs": anomalous_run_ids,
             "sigma_y_clean": np.round(sigma_y_clean, 4).tolist(),
             "sigma_y_unmasked": np.round(sigma_y_unmasked, 4).tolist(),
             "total_offline_rows": int(stats["total_offline_rows"]),
             "incomplete_7_sensor_rows": int(stats["incomplete_7_sensor_rows"]),
             "anomaly_rows": int(stats["anomaly_rows"]),
         },
-        "mass_balance_discovery": {
-            "exp010_v0": 0.5450,
-            "exp010_v_end_true": 0.6468,
-            "exp010_v_end_naive": 1.402,
-            "exp010_sum_pos_dv": 0.9317,
-            "exp010_sum_neg_dv": -0.8192,
-            "exp010_n_samples": 22,
-            "c_glc_feed_calibrated_g_per_L": 18.0,
-            "dev_wmse_before": 24.991,
-            "dev_wmse_after": 8.763,
-            "dev_vcd_r2_after": 0.588,
-            "dev_glc_r2_after": 0.891,
-            "volume_series": vol_series,
-        },
+        "mass_balance_discovery": mass_balance_summary,
         "benchmark_comparison": {
-            "unremediated": {
-                "k_eff": 47,
-                "gamma_col": 474808.78,
-                "pooled_test_wmse": 29.5217,
-                "rmse": [3.606, 2.355, 1.805, 2.526],
-                "r2": [-1.440, 0.235, 0.450, 0.523],
-                "exp012_wmse": 68.0246,
-                "exp009_wmse": 10.1332,
-                "exp011_unmasked_deg": 12.3523,
-                "ci_coverage_pct": 54.69,
-                "ekf_vcd_rmse": 1.761,
-                "score": 5.93,
-                "verdict": "CONDITIONAL / NO-GO",
+            "stage1_mechanistic_only": {
+                "k_eff": int(len(twin_clean.p_mech)),
+                "pooled_test_wmse": round(float(m_stage1["wmse"]), 4),
+                "rmse": np.round(m_stage1["rmse"], 3).tolist(),
+                "r2": np.round(m_stage1["r2"], 3).tolist(),
             },
             "remediated": {
                 "k_eff": int(twin_clean.n_ml),
@@ -1023,10 +1076,13 @@ def main() -> None:
                 "rmse": np.round(m_ht["rmse"], 3).tolist(),
                 "r2": np.round(m_ht["r2"], 3).tolist(),
                 "min_x": round(float(m_ht["min_x"]), 4),
-                "exp012_wmse": round(float(m_ht_012["wmse"]), 4),
-                "exp009_wmse": round(float(m_ht_009["wmse"]), 4),
-                "exp011_unmasked_wmse": round(float(m_ht_unm["wmse"]), 4),
-                "exp011_unmasked_deg": round(float(m_ht_unm["wmse"] - m_ht["wmse"]), 4),
+                "per_campaign_test_wmse": {
+                    eid: round(float(met["wmse"]), 4) for eid, met in per_campaign_ht.items()
+                },
+                "fedbatch_test_wmse": round(float(m_ht_fb["wmse"]), 4),
+                "shifted_batch_wmse": round(float(m_ht_shift["wmse"]), 4),
+                "anomaly_unmasked_wmse": round(float(m_ht_unm["wmse"]), 4),
+                "anomaly_unmasked_deg": round(float(m_ht_unm["wmse"] - m_ht["wmse"]), 4),
                 "ci_coverage_pct": round(float(cov_ht_pct), 2),
                 "pat_dev_rmse": round(float(ekf_res["pat_soft_sensor_dev_rmse"]), 3),
                 "ekf_vcd_rmse": round(float(ekf_res["ekf_vcd_test_rmse"]), 3),
@@ -1051,8 +1107,11 @@ def main() -> None:
                 "pooled_test_wmse": round(float(m_vs["wmse"]), 4),
                 "rmse": np.round(m_vs["rmse"], 3).tolist(),
                 "r2": np.round(m_vs["r2"], 3).tolist(),
-                "exp012_wmse": round(float(m_vs_012["wmse"]), 4),
-                "exp009_wmse": round(float(m_vs_009["wmse"]), 4),
+                "per_campaign_test_wmse": {
+                    eid: round(float(met["wmse"]), 4) for eid, met in per_campaign_vs.items()
+                },
+                "fedbatch_test_wmse": round(float(m_vs_fb["wmse"]), 4),
+                "shifted_batch_wmse": round(float(m_vs_shift["wmse"]), 4),
                 "ci_coverage_pct": round(float(cov_vs_pct), 2),
             },
         },

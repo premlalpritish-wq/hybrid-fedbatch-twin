@@ -47,6 +47,7 @@ def _load_bundle_model(bundle_path: Path) -> Tuple[BioreactorParams, PhysicsInfo
                 np.asarray(entry["std"], dtype=float),
             )
     model.dov_stats = dov_stats
+    model.calibrated_params = p_rec
     model.fit_metadata = dict(g.get("fit_metadata", {}))
     model.is_trained = True
     model._update_checksum()

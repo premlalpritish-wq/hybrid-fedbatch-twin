@@ -40,3 +40,11 @@ include = ["hybrid_fedbatch_twin*", "api*", "mcp_server*", "agents*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+addopts = "--strict-markers"
+markers = [
+    "hygiene: fast repository, gitignore, bundle, and ALCOA+ artifact consistency guardrails",
+    "unit: fast standalone physics, numerical, and adjoint unit checks",
+    "contract: fast persistence, API/MCP schema, truth-isolation, and OOD/fallback contract tests",
+    "agent: fast CAPA deviation graph observability and faithfulness evaluation tests",
+    "slow: heavy multi-minute Stage-1/Stage-2 training, full closed-loop simulation, and benchmark tests",
+]

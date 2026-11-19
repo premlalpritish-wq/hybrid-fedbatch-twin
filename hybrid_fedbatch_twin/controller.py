@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 import numpy as np
 
 from .estimator import HybridExtendedKalmanFilter, run_twin_estimation_loop
@@ -19,11 +19,10 @@ from .mechanistic import (
 
 # Fixed physical normalization scales for dimensionless 7-state RMSE comparison
 STATE_NORM_SCALES = np.array([15.0, 2.0, 2.0, 8.2, 2.5, 5.0, 3.0], dtype=float)
-_disturbance_profile = disturbance_profile
 
 
 class ClosedLoopFeedController:
-    """Hybrid-Twin supervisory feed controller maintaining mu_target while guarding DO & acetate."""
+    """Hybrid-Twin supervisory feed controller maintaining mu_target while guarding DO, acetate, and OOD/residual gates."""
 
     def __init__(
         self,
@@ -36,7 +35,11 @@ class ClosedLoopFeedController:
         vvm: float = 1.2,
         F_max: float = 0.30,
         disturbance_mode: str = "none",
+        fallback_policy: Literal["safe_nominal", "hold"] = "safe_nominal",
+        F_hold: Optional[float] = None,
     ) -> None:
+        if fallback_policy not in ("safe_nominal", "hold"):
+            raise ValueError(f"Unsupported fallback_policy: {fallback_policy!r}. Must be 'safe_nominal' or 'hold'.")
         self.params = params
         self.residual_model = residual_model
         self.mu_target = float(mu_target)
@@ -46,15 +49,65 @@ class ClosedLoopFeedController:
         self.vvm = float(vvm)
         self.F_max = float(F_max)
         self.disturbance_mode = disturbance_mode
+        self.fallback_policy = str(fallback_policy)
+        self.F_hold = None if F_hold is None else float(F_hold)
 
-    def _apply_operating_disturbance(self, t: float) -> Tuple[float, float]:
-        rpm_now, vvm_now, _ = disturbance_profile(
-            self.disturbance_mode, float(t), self.rpm, self.vvm, self.params.S_feed
+        self.last_control_mode: str = "hybrid_adaptive"
+        self.last_fallback_active: bool = False
+        self.last_undecided: bool = False
+        self.last_escalation_event: Optional[Dict[str, Any]] = None
+        self.escalation_events: List[Dict[str, Any]] = []
+        self._last_safe_F: Optional[float] = None
+
+    def _compute_safe_fallback_feed(
+        self,
+        X_v: float,
+        S: float,
+        C_L: float,
+        A: float,
+        V: float,
+        rpm_now: float,
+        vvm_now: float,
+    ) -> float:
+        """Compute strictly ML-free conservative fallback feed setpoint on OOD or residual breach."""
+        if V >= self.params.V_max * 0.995 or C_L <= 1.6 or A >= self.A_limit:
+            return 0.0
+        if self.fallback_policy == "hold":
+            hold_val = 0.0 if self.F_hold is None else self.F_hold
+            return float(np.clip(hold_val, 0.0, 0.5 * self.F_max))
+        if S >= 2.0 * self.S_set:
+            return 0.0
+
+        o2_av = C_L / (0.005 + C_L)
+        k_la_nom = nominal_kla(rpm_now, vvm_now, V, self.params)
+        otr_avail = k_la_nom * max(0.0, self.params.C_star - max(C_L, 2.5)) / 1000.0
+        mu_otr_cap_nom = max(
+            0.02,
+            self.params.Y_XO * (otr_avail / max(0.1, X_v) - self.params.m_o * o2_av),
         )
-        return rpm_now, vvm_now
+        mu_safe = min(0.5 * self.mu_target, 0.5 * self.params.mu_max, mu_otr_cap_nom)
+        s_safe = min(self.S_set, 0.15)
+        s_av_safe = s_safe / (0.002 + s_safe)
+        q_p_safe = (self.params.alpha * mu_safe + self.params.beta) * s_av_safe * o2_av
+        q_s_safe = (
+            mu_safe / self.params.Y_XS
+            + self.params.m_s * s_av_safe
+            + q_p_safe / self.params.Y_PS
+        )
+        demand_safe = q_s_safe * X_v * V
+        f_nom_safe = float(np.clip(demand_safe / max(10.0, self.params.S_feed - S), 0.0, 0.5 * self.F_max))
+        if self._last_safe_F is not None:
+            return min(f_nom_safe, self._last_safe_F)
+        return f_nom_safe
 
-    def __call__(self, t: float, x_hat: np.ndarray) -> OperatingInputs:
-        rpm_now, vvm_now = self._apply_operating_disturbance(t)
+    def __call__(
+        self,
+        t: float,
+        x_hat: np.ndarray,
+        gate_status: Optional[Dict[str, Any]] = None,
+    ) -> OperatingInputs:
+        # Controller remains strictly blind to plant-side actuator/feed disturbances
+        rpm_now, vvm_now = self.rpm, self.vvm
 
         X_v = max(0.05, float(x_hat[0]))
         S = max(0.0, float(x_hat[2]))
@@ -62,13 +115,74 @@ class ClosedLoopFeedController:
         A = max(0.0, float(x_hat[4]))
         V = max(0.2, float(x_hat[6]))
 
-        if V >= self.params.V_max * 0.995:
-            return OperatingInputs(F=0.0, rpm=rpm_now, vvm=vvm_now, S_feed=None)
-
         u_probe = OperatingInputs(F=0.0, rpm=rpm_now, vvm=vvm_now, S_feed=None)
         rates_hat = compute_rates(
             x_hat, u_probe, self.params, mode="hybrid", residual_model=self.residual_model
         )
+
+        dov_breach = bool(rates_hat.get("in_domain", 1.0) < 0.5)
+        gate_undecided = (
+            bool(gate_status.get("undecided", not gate_status.get("in_domain", True)))
+            if gate_status is not None
+            else False
+        )
+        residual_breach = (
+            bool(gate_status.get("residual_breach", False))
+            if gate_status is not None
+            else False
+        )
+        dov_in_domain_gate = (
+            bool(gate_status.get("dov_in_domain", not dov_breach))
+            if gate_status is not None
+            else (not dov_breach)
+        )
+        undecided = bool(dov_breach or gate_undecided or residual_breach or (not dov_in_domain_gate))
+
+        if undecided:
+            d_m_val = (
+                float(gate_status.get("d_m", rates_hat.get("d_m", 0.0)))
+                if gate_status is not None
+                else float(rates_hat.get("d_m", 0.0))
+            )
+            nis_val = float(gate_status.get("nis", 0.0)) if gate_status is not None else 0.0
+            spe_val = float(gate_status.get("spe", 0.0)) if gate_status is not None else 0.0
+            if gate_status is not None and gate_status.get("gate_reason") not in (None, "", "nominal"):
+                gate_reason = str(gate_status["gate_reason"])
+            elif dov_breach and residual_breach:
+                gate_reason = "dual_ood_and_residual_breach"
+            elif dov_breach:
+                gate_reason = "mahalanobis_ood"
+            elif residual_breach:
+                gate_reason = "residual_breach"
+            else:
+                gate_reason = "undecided_gate"
+
+            F_safe = self._compute_safe_fallback_feed(X_v, S, C_L, A, V, rpm_now, vvm_now)
+            self.last_fallback_active = True
+            self.last_undecided = True
+            self.last_control_mode = f"safe_fallback_{self.fallback_policy}"
+            esc_event: Dict[str, Any] = {
+                "event_type": "CONTROL_FALLBACK_ESCALATION",
+                "t_h": float(t),
+                "policy": self.fallback_policy,
+                "gate_reason": gate_reason,
+                "d_m": d_m_val,
+                "nis": nis_val,
+                "spe": spe_val,
+                "F_safe": float(F_safe),
+                "requires_operator_review": True,
+            }
+            self.last_escalation_event = esc_event
+            self.escalation_events.append(esc_event)
+            return OperatingInputs(F=float(F_safe), rpm=rpm_now, vvm=vvm_now, S_feed=None)
+
+        if V >= self.params.V_max * 0.995:
+            self.last_fallback_active = False
+            self.last_undecided = False
+            self.last_control_mode = "volume_limit_stop"
+            self.last_escalation_event = None
+            return OperatingInputs(F=0.0, rpm=rpm_now, vvm=vvm_now, S_feed=None)
+
         mu_eff = float(rates_hat["mu"])
         eta_mu_hat = float(rates_hat.get("eta_mu", 1.0))
 
@@ -105,6 +219,11 @@ class ClosedLoopFeedController:
         demand_g_h = q_S_sp * X_v * V + gain_s * (s_sp - S) * V
         F_cmd = demand_g_h / max(10.0, self.params.S_feed - S)
         F_cmd = float(np.clip(F_cmd, 0.0, self.F_max))
+        self._last_safe_F = F_cmd
+        self.last_fallback_active = False
+        self.last_undecided = False
+        self.last_control_mode = "hybrid_adaptive"
+        self.last_escalation_event = None
         return OperatingInputs(F=F_cmd, rpm=rpm_now, vvm=vvm_now, S_feed=None)
 
 
@@ -129,14 +248,9 @@ class NominalMechanisticController:
         self.F_max = float(F_max)
         self.disturbance_mode = disturbance_mode
 
-    def _apply_operating_disturbance(self, t: float) -> Tuple[float, float]:
-        rpm_now, vvm_now, _ = disturbance_profile(
-            self.disturbance_mode, float(t), self.rpm, self.vvm, self.params.S_feed
-        )
-        return rpm_now, vvm_now
-
     def __call__(self, t: float, x_hat: np.ndarray) -> OperatingInputs:
-        rpm_now, vvm_now = self._apply_operating_disturbance(t)
+        del t
+        rpm_now, vvm_now = self.rpm, self.vvm
 
         X_v = max(0.05, float(x_hat[0]))
         S = max(0.0, float(x_hat[2]))
@@ -191,15 +305,9 @@ class OpenLoopExponentialController:
         self.t_batch_delay_h = float(t_batch_delay_h)
         self.disturbance_mode = disturbance_mode
 
-    def _apply_operating_disturbance(self, t: float) -> Tuple[float, float]:
-        rpm_now, vvm_now, _ = disturbance_profile(
-            self.disturbance_mode, float(t), self.rpm, self.vvm, self.params.S_feed
-        )
-        return rpm_now, vvm_now
-
     def __call__(self, t: float, x_hat: np.ndarray) -> OperatingInputs:
         del x_hat
-        rpm_now, vvm_now = self._apply_operating_disturbance(t)
+        rpm_now, vvm_now = self.rpm, self.vvm
         if t < self.t_batch_delay_h:
             return OperatingInputs(F=0.0, rpm=rpm_now, vvm=vvm_now, S_feed=None)
         dt_feed = float(t - self.t_batch_delay_h)
@@ -233,14 +341,9 @@ class ManualFeedController:
         self.vvm = float(vvm)
         self.disturbance_mode = disturbance_mode
 
-    def _apply_operating_disturbance(self, t: float) -> Tuple[float, float]:
-        rpm_now, vvm_now, _ = disturbance_profile(
-            self.disturbance_mode, float(t), self.rpm, self.vvm, self.params.S_feed
-        )
-        return rpm_now, vvm_now
-
     def __call__(self, t: float, x_hat: np.ndarray) -> OperatingInputs:
-        rpm_now, vvm_now = self._apply_operating_disturbance(t)
+        del t
+        rpm_now, vvm_now = self.rpm, self.vvm
         V = float(x_hat[6])
         F_cmd = 0.0 if V >= self.params.V_max * 0.995 else max(0.0, self.F_set)
         return OperatingInputs(F=F_cmd, rpm=rpm_now, vvm=vvm_now, S_feed=None)
@@ -298,11 +401,11 @@ def _run_nominal_controller_loop(
     for i in range(n_steps):
         u_i = nom_ctrl(t_grid[i], ekf_nom.x)
         inputs[i] = [u_i.F, u_i.rpm, u_i.vvm]
-        _, _, s_feed_plant = disturbance_profile(
-            dist_mode, float(t_grid[i]), u_i.rpm, u_i.vvm, p_plant.S_feed
+        rpm_plant, vvm_plant, s_feed_plant = disturbance_profile(
+            dist_mode, float(t_grid[i]), u_i.rpm, u_i.vvm, p_plant.S_feed, V_vessel=p_plant.V_vessel
         )
         u_plant = OperatingInputs(
-            F=u_i.F, rpm=u_i.rpm, vvm=u_i.vvm, S_feed=s_feed_plant
+            F=u_i.F, rpm=rpm_plant, vvm=vvm_plant, S_feed=s_feed_plant
         )
         u_model = OperatingInputs(
             F=u_i.F, rpm=u_i.rpm, vvm=u_i.vvm, S_feed=None
@@ -338,10 +441,10 @@ def _run_nominal_controller_loop(
 
     u_e = nom_ctrl(t_grid[-1], ekf_nom.x)
     inputs[-1] = [u_e.F, u_e.rpm, u_e.vvm]
-    _, _, s_feed_e = disturbance_profile(
-        dist_mode, float(t_grid[-1]), u_e.rpm, u_e.vvm, p_plant.S_feed
+    rpm_e, vvm_e, s_feed_e = disturbance_profile(
+        dist_mode, float(t_grid[-1]), u_e.rpm, u_e.vvm, p_plant.S_feed, V_vessel=p_plant.V_vessel
     )
-    u_e_plant = OperatingInputs(F=u_e.F, rpm=u_e.rpm, vvm=u_e.vvm, S_feed=s_feed_e)
+    u_e_plant = OperatingInputs(F=u_e.F, rpm=rpm_e, vvm=vvm_e, S_feed=s_feed_e)
     u_e_model = OperatingInputs(F=u_e.F, rpm=u_e.rpm, vvm=u_e.vvm, S_feed=None)
     rt_e = compute_rates(true_states[-1], u_e_plant, p_plant, mode="ground_truth")
     rh_e = ekf_hyb.current_rates(u_e_model)
@@ -394,6 +497,11 @@ def summarize_control_run(
 
     d_m = sim_result.get("d_m", np.zeros_like(t))
     in_domain = sim_result.get("in_domain", np.ones_like(t))
+    undecided = sim_result.get("undecided", 1.0 - np.asarray(in_domain, dtype=float))
+    fallback_active = sim_result.get("fallback_active", np.zeros_like(t, dtype=bool))
+    esc_events = sim_result.get("escalation_events", [])
+    nis_hyb = sim_result.get("nis_hyb", np.zeros_like(t))
+    spe_hyb = sim_result.get("spe_hyb", np.zeros_like(t))
 
     return {
         # Ground-truth validation benchmark KPIs
@@ -429,6 +537,11 @@ def summarize_control_run(
         "est_mu_rmse": float(np.sqrt(np.mean((mu_hyb[fed_mask] - mu_target) ** 2))),
         "max_d_m": float(np.max(d_m)),
         "ood_fraction": float(np.mean(in_domain < 0.5)),
+        "undecided_fraction": float(np.mean(np.asarray(undecided, dtype=float) > 0.5)),
+        "fallback_fraction": float(np.mean(np.asarray(fallback_active, dtype=bool))),
+        "escalation_count": float(len(esc_events)),
+        "max_nis_hyb": float(np.max(nis_hyb)),
+        "max_spe_hyb": float(np.max(spe_hyb)),
     }
 
 

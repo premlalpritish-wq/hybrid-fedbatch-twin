@@ -613,6 +613,7 @@ def _fast_loss_grad_and_rss(
     qS_all = np.empty((T_steps, M), dtype=float)
     our_all = np.empty((T_steps, M), dtype=float)
     D_all = np.empty((T_steps, M), dtype=float)
+    ev_all = np.empty((T_steps, M), dtype=float)
     d_mu_dS_all = np.empty((T_steps, M), dtype=float)
     d_mu_dCL_all = np.empty((T_steps, M), dtype=float)
     d_qS_dS_all = np.empty((T_steps, M), dtype=float)
@@ -737,7 +738,9 @@ def _fast_loss_grad_and_rss(
         phi3_all[t], dphi3_all[t], f3_all[t] = phi3, dphi3, f3
 
         raw_next = np.empty((M, 7), dtype=float)
-        raw_next[:, 0] = Xv + dt * (mu - k_d - D) * Xv
+        ev_step = np.exp(np.clip(dt * (mu - k_d - D), -20.0, 20.0))
+        ev_all[t] = ev_step
+        raw_next[:, 0] = Xv * ev_step
         raw_next[:, 1] = Xd + dt * (k_d * Xv - D * Xd)
         raw_next[:, 2] = S + dt * phi2 * f2
         raw_next[:, 3] = CL + dt * phi3 * f3
@@ -817,7 +820,7 @@ def _fast_loss_grad_and_rss(
         )
 
         g_Xv = (
-            g_Xv_nxt * (1.0 + dt * (mu - k_d - D))
+            g_Xv_nxt * ev_all[t]
             + g_Xd_nxt * (dt * k_d)
             + g_A_nxt * (dt * (qap - qac))
             + g_P_nxt * (dt * q_P)
@@ -836,9 +839,9 @@ def _fast_loss_grad_and_rss(
         g_CL -= g_f3 * (k_La + D)
         g_our, g_d_our_dCL = -g_f3, g_z3 * dt
 
-        g_mu = g_Xv_nxt * dt * Xv + g_qS * inv_Yxs + 1000.0 * (g_our * Xv) * inv_Yxo
+        g_mu = g_Xv_nxt * dt * Xv * ev_all[t] + g_qS * inv_Yxs + 1000.0 * (g_our * Xv) * inv_Yxo
         g_qP = g_P_nxt * dt * Xv + g_qS * inv_Yps
-        g_delta_kd = (-g_Xv_nxt + g_Xd_nxt) * dt * Xv * mask_dkd_all[t]
+        g_delta_kd = (-g_Xv_nxt * ev_all[t] + g_Xd_nxt) * dt * Xv * mask_dkd_all[t]
 
         g_q_a_prod = g_A_nxt * dt * Xv + g_qS * inv_Yas + 2.0 * c_flux * qap + c_ov * qac
         g_q_a_cons = -g_A_nxt * dt * Xv + 1000.0 * g_our * Xv * inv_Yao + 2.0 * c_flux * qac + c_ov * qap
@@ -1060,18 +1063,19 @@ def _init_worker() -> None:
 def _fit_bootstrap_member(args: Tuple[Any, ...]) -> Tuple[int, np.ndarray, bool, int]:
     """Train one Dirichlet-weighted + residual-perturbed bootstrap ensemble member."""
     b_idx, th_base, lb, ub, ds, l2_w, specs, bdata, p_dict, boot_seed, h_ace, h_mu, maxiter = args
+    del h_ace, h_mu
     p = BioreactorParams(**p_dict)
     rng = np.random.default_rng(boot_seed)
-    th_fresh = _gam_init_weights(1000 + 37 * boot_seed + 13 * b_idx, specs, lb, ub, h_ace=h_ace, h_mu=h_mu)
     m_batches = bdata["F"].shape[1]
-    dir_w = rng.dirichlet(np.full(m_batches, 1.3)) * m_batches
+    dir_w = rng.dirichlet(np.full(m_batches, 2.5)) * m_batches
     w_boot = bdata["w_obs"] * dir_w[None, :, None]
     mask_obs = bdata["w_obs"] > 0.0
     sig_grid = np.where(mask_obs, 1.0 / np.sqrt(np.maximum(1e-12, bdata["inv_var_obs"])), 0.0)
-    y_boot = np.maximum(0.0, bdata["y_obs"] + rng.normal(0.0, 0.85 * sig_grid))
+    y_boot = np.maximum(0.0, bdata["y_obs"] + rng.normal(0.0, 0.55 * sig_grid))
     b_boot = {**bdata, "w_obs": w_boot, "y_obs": y_boot}
 
-    th0 = 0.88 * th_base + 0.12 * th_fresh + rng.normal(0.0, 0.08, size=len(th_base)) * ds
+    # Warm-start unbiasedly around the base trajectory optimum (no shrinkage toward fresh random priors)
+    th0 = th_base + rng.normal(0.0, 0.02, size=len(th_base)) * ds
     th0 = np.clip(th0, lb + 1e-4, ub - 1e-4)
     bounds_u = list(zip(lb / ds, ub / ds))
 
@@ -1108,7 +1112,13 @@ def _compute_cov_inv_and_p99(
 class PhysicsInformedNeuralODE:
     """Parsimonious bootstrap-aggregated GAM-86 Neural ODE with power-law rheology and subspace DoV."""
 
-    def __init__(self, hidden_dim: int = 5, seed: int = 7, n_bootstrap: int = 15) -> None:
+    def __init__(
+        self,
+        hidden_dim: int = 5,
+        seed: int = 7,
+        n_bootstrap: int = 15,
+        params: Optional[BioreactorParams] = None,
+    ) -> None:
         self.hidden_dim = hidden_dim
         self.seed = seed
         self.n_bootstrap = max(1, int(n_bootstrap))
@@ -1120,17 +1130,54 @@ class PhysicsInformedNeuralODE:
         self._unpacked_weights = _unpack_theta(self.weights, self.specs)
         self._unpacked_src = self.weights
         self.ensemble_weights: List[np.ndarray] = [self.weights.copy()]
+        self._ens_cache_key: Any = None
+        self._ens_unpacked: Optional[Tuple[np.ndarray, ...]] = None
+        self.calibrated_params: Optional[BioreactorParams] = replace(params) if params is not None else None
         self.dov_stats: Dict[str, Tuple[np.ndarray, ...]] = {}
         self.training_history: List[float] = []
         self.fit_metadata: Dict[str, float] = {}
         self.is_trained = False
         self.weights_sha256 = ""
 
+    def _get_stacked_ensemble(self) -> Tuple[np.ndarray, ...]:
+        """Cache and return stacked ensemble parameter blocks along axis 0 for output-space averaging."""
+        members = self.ensemble_weights if self.ensemble_weights else [self.weights]
+        key = (
+            len(members),
+            tuple((id(m), float(m[0]), float(m[-1])) for m in members),
+        )
+        if getattr(self, "_ens_cache_key", None) != key or getattr(self, "_ens_unpacked", None) is None:
+            unpacked_list = [_unpack_theta(np.asarray(th, dtype=float), self.specs) for th in members]
+            kd_w1 = np.stack([u[0] for u in unpacked_list], axis=0)
+            kd_b1 = np.stack([u[1] for u in unpacked_list], axis=0)
+            sig_kd_b1 = _sigmoid(kd_b1)
+            kd_w2 = np.stack([u[2] for u in unpacked_list], axis=0)
+            kla_c = np.stack([u[3] for u in unpacked_list], axis=0)
+            kla_p = np.stack([u[4] for u in unpacked_list], axis=0)
+            ace_W1 = np.stack([u[5] for u in unpacked_list], axis=0)
+            ace_b1 = np.stack([u[6] for u in unpacked_list], axis=0)
+            ace_W2 = np.stack([u[7] for u in unpacked_list], axis=0)
+            ace_b2 = np.stack([u[8] for u in unpacked_list], axis=0)
+            mu_W1 = np.stack([u[9] for u in unpacked_list], axis=0)
+            mu_b1 = np.stack([u[10] for u in unpacked_list], axis=0)
+            mu_w2 = np.stack([u[11] for u in unpacked_list], axis=0)
+            mu_b2 = np.stack([u[12] for u in unpacked_list], axis=0)
+            self._ens_unpacked = (
+                kd_w1, kd_b1, sig_kd_b1, kd_w2,
+                kla_c, kla_p,
+                ace_W1, ace_b1, ace_W2, ace_b2,
+                mu_W1, mu_b1, mu_w2, mu_b2,
+            )
+            self._ens_cache_key = key
+        return self._ens_unpacked  # type: ignore[return-value]
+
     def _update_checksum(self) -> None:
         arr = np.vstack(self.ensemble_weights) if self.ensemble_weights else self.weights[None, :]
         self.weights_sha256 = hashlib.sha256(arr.tobytes()).hexdigest()
         self._unpacked_weights = _unpack_theta(self.weights, self.specs)
         self._unpacked_src = self.weights
+        self._ens_cache_key = None
+        self._get_stacked_ensemble()
 
     @staticmethod
     def _mahalanobis(
@@ -1243,15 +1290,17 @@ class PhysicsInformedNeuralODE:
                 th, X_tot, S_a, CL_a, A_a, vt_a, mum_a, specs=self.specs
             )
 
-        dkd_m, ek_m, qp_m, qc_m, emu_m = _gam_eval_heads(
-            self.weights, X_tot, S_a, CL_a, A_a, vt_a, mum_a, specs=self.specs
-        )
+        dkd_m = np.mean(dkd_l, axis=0)
+        ek_m = np.mean(ek_l, axis=0)
+        qp_m = np.mean(qp_l, axis=0)
+        qc_m = np.mean(qc_l, axis=0)
+        emu_m = np.mean(emu_l, axis=0)
 
-        var_kd = np.var(dkd_l, axis=0) if B > 1 else np.zeros(n, dtype=float)
-        var_ek = np.var(ek_l, axis=0) if B > 1 else np.zeros(n, dtype=float)
-        var_qp = np.var(qp_l, axis=0) if B > 1 else np.zeros(n, dtype=float)
-        var_qc = np.var(qc_l, axis=0) if B > 1 else np.zeros(n, dtype=float)
-        var_mu = np.var(emu_l, axis=0) if B > 1 else np.zeros(n, dtype=float)
+        var_kd = np.var(dkd_l, axis=0, ddof=1) if B > 1 else np.zeros(n, dtype=float)
+        var_ek = np.var(ek_l, axis=0, ddof=1) if B > 1 else np.zeros(n, dtype=float)
+        var_qp = np.var(qp_l, axis=0, ddof=1) if B > 1 else np.zeros(n, dtype=float)
+        var_qc = np.var(qc_l, axis=0, ddof=1) if B > 1 else np.zeros(n, dtype=float)
+        var_mu = np.var(emu_l, axis=0, ddof=1) if B > 1 else np.zeros(n, dtype=float)
 
         dov = self._compute_dov_vectorized(X_tot, S_a, CL_a, A_a, vt_a, pg_a, vs_a)
         if self.dov_stats:
@@ -1316,18 +1365,14 @@ class PhysicsInformedNeuralODE:
         mu_mech: float = 0.0,
         V: Optional[float] = None,
     ) -> Dict[str, float]:
-        """Fast deterministic single-point GAM-86 prediction for Radau ODE RHS evaluations."""
+        """Fast output-space ensemble-mean GAM-86 prediction for Radau ODE RHS evaluations."""
         del Pg_V, v_s, V
-        if getattr(self, "_unpacked_src", None) is not self.weights:
-            self._unpacked_weights = _unpack_theta(self.weights, self.specs)
-            self._unpacked_src = self.weights
-
         (
-            kd_w1, kd_b1, kd_w2,
-            kla_c, kla_p,
-            ace_W1, ace_b1, ace_W2, ace_b2,
-            mu_W1, mu_b1, mu_w2, mu_b2,
-        ) = self._unpacked_weights
+            kd_w1_e, kd_b1_e, sig_kd_b1_e, kd_w2_e,
+            kla_c_e, kla_p_e,
+            ace_W1_e, ace_b1_e, ace_W2_e, ace_b2_e,
+            mu_W1_e, mu_b1_e, mu_w2_e, mu_b2_e,
+        ) = self._get_stacked_ensemble()
 
         s_pos = max(0.0, float(S))
         cl_pos = max(0.0, float(C_L))
@@ -1348,30 +1393,33 @@ class PhysicsInformedNeuralODE:
             ],
             dtype=float,
         )
-        phi_kd = _sigmoid(zk[:, None] * kd_w1 + kd_b1) - _sigmoid(kd_b1)
-        dkd_val = max(0.0, float(0.05 * np.sum(phi_kd * kd_w2)))
+        phi_kd = _sigmoid(zk[None, :, None] * kd_w1_e + kd_b1_e) - sig_kd_b1_e
+        dkd_val = float(np.mean(np.maximum(0.0, 0.05 * np.sum(phi_kd * kd_w2_e, axis=(1, 2)))))
 
-        u0 = 1.0 + xt_pos / 10.0
-        u1 = 1.0 + xt_pos / 25.0
-        psi_kla = kla_c[0] * (u0 ** kla_p[0] - 1.0) + kla_c[1] * (u1 ** kla_p[1] - 1.0)
-        ek_val = float(1.0 / (1.0 + max(0.0, psi_kla)))
+        u_kla = np.array([1.0 + xt_pos / _KLA_SCALES[0], 1.0 + xt_pos / _KLA_SCALES[1]], dtype=float)
+        psi_kla = np.sum(kla_c_e * (u_kla[None, :] ** kla_p_e - 1.0), axis=1)
+        ek_val = float(np.mean(1.0 / (1.0 + np.maximum(0.0, psi_kla))))
 
         zm = np.array([s_pos / (0.5 + s_pos), np.log1p(s_pos * 0.5) * 0.4, a_pos / (3.0 + a_pos)], dtype=float)
-        emu_val = float(0.05 + _sigmoid(float(np.tanh(mu_W1 @ zm + mu_b1) @ mu_w2 + mu_b2[0])))
-        mu_hyb = float(mu_mech) * emu_val
+        h_mu = np.tanh((mu_W1_e @ zm) + mu_b1_e)
+        emu_b = 0.05 + _sigmoid(np.sum(h_mu * mu_w2_e, axis=1) + mu_b2_e[:, 0])
+        emu_val = float(np.mean(emu_b))
 
-        za = np.array(
+        za_base = np.array(
             [
-                mu_hyb / 0.45,
+                0.0,
                 np.log1p(s_pos * 10.0) / 3.0,
                 np.log1p(cl_pos * 2.0) / 3.0,
                 np.log1p(a_pos * 2.0) / 3.0,
             ],
             dtype=float,
         )
-        raw_ace = ace_W2 @ np.tanh(ace_W1 @ za + ace_b1) + ace_b2
-        qp_val = float(0.08 * _softplus(raw_ace[0]) * s_avail)
-        qc_val = float(0.08 * _softplus(raw_ace[1]) * a_avail * o2_avail)
+        za_b = np.broadcast_to(za_base, (len(emu_b), 4)).copy()
+        za_b[:, 0] = (float(mu_mech) * emu_b) / 0.45
+        h_ace = np.tanh(np.einsum("bij,bj->bi", ace_W1_e, za_b) + ace_b1_e)
+        raw_ace = np.einsum("bij,bj->bi", ace_W2_e, h_ace) + ace_b2_e
+        qp_val = float(np.mean(0.08 * _softplus(raw_ace[:, 0]) * s_avail))
+        qc_val = float(np.mean(0.08 * _softplus(raw_ace[:, 1]) * a_avail * o2_avail))
 
         if self.dov_stats:
             z_met = np.array(
@@ -1423,7 +1471,8 @@ class PhysicsInformedNeuralODE:
     ) -> Dict[str, float]:
         """Single-point intensive prediction with calibrated epistemic UQ and subspace DoV."""
         if v_tip is None or Pg_V is None or v_s is None:
-            hyd = compute_hydrodynamics(rpm, vvm, V, params or BioreactorParams())
+            p_eff = params or self.calibrated_params or BioreactorParams()
+            hyd = compute_hydrodynamics(rpm, vvm, V, p_eff)
             v_tip = hyd["v_tip"]
             Pg_V = hyd["Pg_V"]
             v_s = hyd["v_s"]
@@ -1454,9 +1503,10 @@ class PhysicsInformedNeuralODE:
         vvm: float,
         V: float,
         X_d: float = 0.0,
+        params: Optional[BioreactorParams] = None,
     ) -> Tuple[float, float, float]:
         """Backward-compatible 3-tuple predictor returning (delta_kd, eta_kla, q_A_net)."""
-        p = BioreactorParams()
+        p = params or self.calibrated_params or BioreactorParams()
         hyd = compute_hydrodynamics(rpm, vvm, V, p)
         s_pos = max(0.0, float(S))
         cl_pos = max(0.0, float(C_L))
@@ -1471,6 +1521,7 @@ class PhysicsInformedNeuralODE:
             Pg_V=hyd["Pg_V"],
             v_s=hyd["v_s"],
             mu_mech=mu_m,
+            params=p,
         )
         return float(out["delta_kd"]), float(out["eta_kla"]), float(out["q_A_prod"] - out["q_A_cons"])
 
@@ -1483,6 +1534,7 @@ class PhysicsInformedNeuralODE:
         n_bootstrap: Optional[int] = None,
     ) -> Dict[str, float]:
         """Train indirect trajectory-integrated GAM-86 + converged bootstrap ensemble (zero X_d)."""
+        self.calibrated_params = replace(params)
         rng = np.random.default_rng(self.seed + 17)
         t0_wall = time.perf_counter()
         n_boot = self.n_bootstrap if n_bootstrap is None else max(1, int(n_bootstrap))
@@ -1512,7 +1564,7 @@ class PhysicsInformedNeuralODE:
             method="L-BFGS-B",
             jac=True,
             bounds=bounds_u,
-            options={"maxiter": int(maxiter), "ftol": 1e-9, "gtol": 1e-2, "maxcor": 20},
+            options={"maxiter": int(maxiter), "ftol": 1e-12, "gtol": 1e-2, "maxcor": 20},
         )
         base_theta = res_base.x * _D_SCALE
         _, grad_base, std_rss_obs = _fast_loss_grad_and_rss(base_theta, batch_data, params)
@@ -1614,10 +1666,6 @@ class PhysicsInformedNeuralODE:
 
             self.ensemble_weights = [th for _, th, _, _ in results]
             boot_converged = sum(1 for _, _, conv, _ in results if conv)
-            ens_mean = np.mean(self.ensemble_weights, axis=0)
-            self.weights = ens_mean.copy()
-            for sl in (slice(2, 8), slice(10, 16), slice(18, 24)):
-                self.weights[sl] = base_theta[sl]
 
         self.is_trained = True
         self._update_checksum()

@@ -138,6 +138,51 @@ def nominal_kla(rpm: float, vvm: float, V: float, params: BioreactorParams) -> f
     return float(params.k_La0 * (pg_ratio ** 0.40) * (vs_ratio ** 0.50))
 
 
+def default_operating_inputs(
+    params: Optional[BioreactorParams] = None,
+    rpm_ref: float = 450.0,
+    vvm_ref: float = 1.2,
+    F: float = 0.0,
+) -> OperatingInputs:
+    """Return scale-matched default OperatingInputs matching 5 L (Pg/V, v_s) at params.V_0."""
+    p = params or BioreactorParams()
+    if (
+        abs(float(p.V_vessel) - float(_REF_PARAMS_5L.V_vessel)) <= 1e-6
+        and abs(float(p.V_0) - float(_REF_PARAMS_5L.V_0)) <= 1e-6
+    ):
+        return OperatingInputs(F=float(F), rpm=float(rpm_ref), vvm=float(vvm_ref), S_feed=None)
+
+    hyd_ref = compute_hydrodynamics(rpm_ref, vvm_ref, _REF_PARAMS_5L.V_0, _REF_PARAMS_5L)
+    target_pgv = float(hyd_ref["Pg_V"])
+    target_vs = float(hyd_ref["v_s"])
+    geom = vessel_geometry(p)
+    v_m3 = 1e-3 * max(0.05, float(p.V_0))
+    vvm_matched = max(0.01, float(target_vs * geom["A_tank_m2"] * 60.0 / v_m3))
+
+    lo, hi = 50.0, 1200.0
+    pgv_lo = compute_hydrodynamics(lo, vvm_matched, p.V_0, p)["Pg_V"]
+    pgv_hi = compute_hydrodynamics(hi, vvm_matched, p.V_0, p)["Pg_V"]
+    if target_pgv <= pgv_lo:
+        rpm_matched = lo
+    elif target_pgv >= pgv_hi:
+        rpm_matched = hi
+    else:
+        for _ in range(52):
+            mid = 0.5 * (lo + hi)
+            if compute_hydrodynamics(mid, vvm_matched, p.V_0, p)["Pg_V"] < target_pgv:
+                lo = mid
+            else:
+                hi = mid
+        rpm_matched = 0.5 * (lo + hi)
+
+    return OperatingInputs(
+        F=float(F),
+        rpm=float(rpm_matched),
+        vvm=float(vvm_matched),
+        S_feed=None,
+    )
+
+
 def true_kla_viscosity_factor(X_total: float) -> float:
     """Non-Newtonian broth viscosity damping factor on k_L a from total solids X_v + X_d."""
     x_pos = max(0.0, float(X_total))
@@ -458,8 +503,18 @@ def simulate_bioreactor(
     kla_noms = np.zeros(n_steps + 1, dtype=float)
     q_as = np.zeros(n_steps + 1, dtype=float)
 
+    dist_mode = str(getattr(control_fn, "disturbance_mode", "none"))
+    has_dist = dist_mode.lower() != "none"
+
     for i in range(n_steps):
-        u = control_fn(t_grid[i], states[i])
+        u_cmd = control_fn(t_grid[i], states[i])
+        if has_dist:
+            rpm_eff, vvm_eff, sf_eff = disturbance_profile(
+                dist_mode, float(t_grid[i]), u_cmd.rpm, u_cmd.vvm, p.S_feed, V_vessel=p.V_vessel
+            )
+            u = OperatingInputs(F=u_cmd.F, rpm=rpm_eff, vvm=vvm_eff, S_feed=sf_eff)
+        else:
+            u = u_cmd
         r = compute_rates(states[i], u, p, mode=mode, residual_model=residual_model)
         feeds[i] = 0.0 if states[i, 6] >= p.V_max else max(0.0, float(u.F))
         rpms[i] = float(u.rpm)
@@ -474,7 +529,14 @@ def simulate_bioreactor(
             t_grid[i], t_grid[i + 1], states[i], u, p, mode=mode, residual_model=residual_model
         )
 
-    u_last = control_fn(t_grid[-1], states[-1])
+    u_last_cmd = control_fn(t_grid[-1], states[-1])
+    if has_dist:
+        rpm_e, vvm_e, sf_e = disturbance_profile(
+            dist_mode, float(t_grid[-1]), u_last_cmd.rpm, u_last_cmd.vvm, p.S_feed, V_vessel=p.V_vessel
+        )
+        u_last = OperatingInputs(F=u_last_cmd.F, rpm=rpm_e, vvm=vvm_e, S_feed=sf_e)
+    else:
+        u_last = u_last_cmd
     r_last = compute_rates(states[-1], u_last, p, mode=mode, residual_model=residual_model)
     feeds[-1] = 0.0 if states[-1, 6] >= p.V_max else max(0.0, float(u_last.F))
     rpms[-1] = float(u_last.rpm)
@@ -513,26 +575,28 @@ def disturbance_profile(
     rpm_nom: float,
     vvm_nom: float,
     S_feed_nom: float,
+    V_vessel: float = 5.0,
 ) -> Tuple[float, float, float]:
     """Return active (rpm, vvm, S_feed) after injecting optional real-plant disturbances."""
     rpm = float(rpm_nom)
     vvm = float(vvm_nom)
     s_feed = float(S_feed_nom)
+    sf = max(1e-4, float(V_vessel) / 5.0)
     mode = (disturbance_mode or "none").lower()
 
     if mode == "none":
         return rpm, vvm, s_feed
     if mode in ("aeration_drop", "do_drop") and 6.0 <= t <= 9.5:
-        vvm = max(0.35, 0.45 * vvm_nom)
+        vvm = max(0.35 / (sf ** (1.0 / 3.0)), 0.45 * vvm_nom)
     elif mode in ("stirrer_drop", "agitation_drop") and 7.0 <= t <= 10.5:
-        rpm = max(180.0, 0.55 * rpm_nom)
+        rpm = max(180.0 / (sf ** (2.0 / 9.0)), 0.55 * rpm_nom)
     elif mode == "shear_spike" and 8.0 <= t <= 12.0:
-        rpm = min(900.0, rpm_nom + 260.0)
+        rpm = min(900.0 / (sf ** (2.0 / 9.0)), rpm_nom + 260.0 / (sf ** (2.0 / 9.0)))
     elif mode in ("feed_step", "feed_dilution") and t >= 7.0:
         s_feed = 0.70 * S_feed_nom
     elif mode == "combo":
         if 5.5 <= t <= 8.5:
-            vvm = max(0.40, 0.55 * vvm_nom)
+            vvm = max(0.40 / (sf ** (1.0 / 3.0)), 0.55 * vvm_nom)
         if t >= 9.0:
             s_feed = 0.80 * S_feed_nom
     return rpm, vvm, s_feed

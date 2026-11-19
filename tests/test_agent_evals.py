@@ -11,6 +11,8 @@ from agents.deviation_graph import run_deviation_investigation
 from agents.observability import evaluate_capa_report
 from api.main import create_app
 
+pytestmark = pytest.mark.agent
+
 
 @pytest.fixture()
 def temp_db_url(tmp_path: Path) -> str:

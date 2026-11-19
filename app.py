@@ -406,11 +406,79 @@ def build_dataframe(sim: Dict[str, np.ndarray], include_truth: bool = False) -> 
     data["d_m"] = sim["d_m"]
     data["d_m_kla"] = sim["d_m_kla"]
     data["in_domain"] = sim["in_domain"]
+    if "undecided" in sim:
+        data["undecided"] = np.asarray(sim["undecided"], dtype=bool)
+    if "nis_hyb" in sim:
+        data["nis_hyb"] = sim["nis_hyb"]
+    if "spe_hyb" in sim:
+        data["spe_hyb"] = sim["spe_hyb"]
+    if "fallback_active" in sim:
+        data["fallback_active"] = np.asarray(sim["fallback_active"], dtype=bool)
     if include_truth:
         data["mu_true"] = sim["mu_true"]
         data["kd_true"] = sim["kd_true"]
         data["kla_true"] = sim["kla_true"]
     return pd.DataFrame(data)
+
+
+ORACLE_FREE_KPI_KEYS = (
+    "est_final_Xv_g_L",
+    "est_final_Xv_std",
+    "est_final_Xd_g_L",
+    "est_final_Xd_std",
+    "est_final_P_g_L",
+    "est_final_P_std",
+    "est_peak_acetate_g_L",
+    "est_min_substrate_g_L",
+    "est_min_DO_pct",
+    "est_mu_rmse",
+    "max_d_m",
+    "ood_fraction",
+    "undecided_fraction",
+    "fallback_fraction",
+    "escalation_count",
+    "max_nis_hyb",
+    "max_spe_hyb",
+)
+
+ORACLE_METADATA_KEYS = (
+    "max_relative_error_pct",
+    "relative_error_pct",
+    "true_values",
+)
+
+
+def build_audit_export_payload(
+    sim: Dict[str, np.ndarray],
+    kpis: Dict[str, float],
+    params: BioreactorParams,
+    residual_model: Any,
+    calibration_metadata: Dict[str, Any],
+    include_truth: bool = False,
+    operator_id: str = "bioprocess_engineer",
+    batch_id: str = "FB-BL21-001",
+) -> Dict[str, Any]:
+    """Build a sealed ALCOA+ audit export without post-hash mutation or oracle KPI leakage."""
+    meta = dict(calibration_metadata)
+    if include_truth:
+        filtered_kpis = dict(kpis)
+    else:
+        filtered_kpis = {key: kpis[key] for key in ORACLE_FREE_KPI_KEYS if key in kpis}
+        for oracle_key in ORACLE_METADATA_KEYS:
+            meta.pop(oracle_key, None)
+
+    meta["run_kpis"] = {k: round(float(v), 6) for k, v in filtered_kpis.items()}
+    meta["includes_oracle_truth"] = bool(include_truth)
+
+    twin_session = BioreactorDigitalTwin.from_simulation_run(
+        sim,
+        params=params,
+        residual_model=residual_model,
+        calibration_metadata=meta,
+        operator_id=operator_id,
+        batch_id=batch_id,
+    )
+    return twin_session.to_audit_record()
 
 
 def _render_kpi_card(label: str, value: str, sub: str) -> None:
@@ -512,19 +580,19 @@ def main() -> None:
     )
     kpis = summarize_control_run(sim, mu_target=mu_target, params=p_twin)
     dov_p99 = float(neural_metrics["dov_p99"])
-    in_dom_run = kpis["max_d_m"] <= dov_p99
+    in_dom_run = (kpis["max_d_m"] <= dov_p99) and (kpis.get("undecided_fraction", 0.0) == 0.0)
 
     hdr_l, hdr_r = st.columns([3, 1])
     with hdr_l:
         st.title("Hybrid Mechanistic-ML Bioreactor Digital Twin")
         st.caption(
-            f"Portela Level 3-Ready Closed-Loop E. coli BL21 State Estimator (In-Silico Plant Harness) | "
+            f"Portela Level 1 Offline Digital Model / Level 2-Ready Soft-Sensor (In-Silico Plant Harness) | "
             f"GAM-{int(neural_metrics['n_params'])} ({int(neural_metrics['n_params'])} params, "
             f"B={int(neural_metrics['n_bootstrap'])} bootstraps) | Scale: {scale_label}"
         )
     with hdr_r:
         badge_cls = "dov-badge-ok" if in_dom_run else "dov-badge-warn"
-        badge_txt = "IN-DOMAIN OPERATION" if in_dom_run else "OUT-OF-DOMAIN ALERT"
+        badge_txt = "IN-DOMAIN OPERATION" if in_dom_run else "OOD / UNDECIDED FALLBACK"
         st.markdown(
             f'<div style="text-align:right;padding-top:14px;">'
             f'<span class="{badge_cls}">{badge_txt}<br/>max D_M = {kpis["max_d_m"]:.2f} / p99 = {dov_p99:.2f}</span>'
@@ -593,7 +661,7 @@ def main() -> None:
                 _render_kpi_card(
                     "Tracked mu_RMSE & DoV",
                     f"{kpis['est_mu_rmse']:.3f} 1/h",
-                    f"OOD time = {100.0 * kpis['ood_fraction']:.1f}%",
+                    f"Undecided = {100.0 * kpis.get('undecided_fraction', kpis['ood_fraction']):.1f}% | Fallback = {100.0 * kpis.get('fallback_fraction', 0.0):.1f}%",
                 )
         else:
             with r1[0]:
@@ -837,19 +905,22 @@ def main() -> None:
         df_export = build_dataframe(sim, include_truth=show_truth)
         st.dataframe(df_export.head(20), width="stretch")
 
-        twin_session = BioreactorDigitalTwin.from_simulation_run(
-            sim,
+        audit_cal_meta: Dict[str, Any] = {
+            "condition_number_rel": rec["condition_number_rel"],
+            "calibration_sha256": rec["calibration_sha256"],
+            "scale_vessel_L": v_vessel,
+        }
+        if show_truth:
+            audit_cal_meta["max_relative_error_pct"] = rec["max_relative_error_pct"]
+
+        audit_payload = build_audit_export_payload(
+            sim=sim,
+            kpis=kpis,
             params=p_twin,
             residual_model=model,
-            calibration_metadata={
-                "max_relative_error_pct": rec["max_relative_error_pct"],
-                "condition_number_rel": rec["condition_number_rel"],
-                "calibration_sha256": rec["calibration_sha256"],
-                "scale_vessel_L": v_vessel,
-            },
+            calibration_metadata=audit_cal_meta,
+            include_truth=show_truth,
         )
-        audit_payload = twin_session.to_audit_record()
-        audit_payload["run_kpis"] = {k: round(float(v), 6) for k, v in kpis.items()}
 
         dl1, dl2 = st.columns(2)
         with dl1:

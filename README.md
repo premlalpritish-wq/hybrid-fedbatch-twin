@@ -6,10 +6,10 @@ A grey-box bioprocess digital twin for recombinant *E. coli* BL21 fed-batch ferm
 
 ## Key Capabilities & Verified Metrics
 
-- **Portela Level 3+ Audit Rating:** Remediated across an adversarial two-iteration engineering loop from `2.6 / 10 (NO-GO)` (Iteration 0) to `6.4 / 10 (NO-GO)` (Iteration 1) to `9.2 / 10 (GO)` (Iteration 2). See [`AUDIT_REPORT_VON_STOSCH.md`](AUDIT_REPORT_VON_STOSCH.md).
+- **Digital Twin Maturity Classification (Portela et al., 2021):** **Portela Level 1 Offline Digital Model / Level 2-Ready Soft-Sensor Architecture** (*in-silico* plant harness and FastAPI/MCP service; true Level 3 requires validated GMP OT/PLC closed-loop integration). Remediated via adversarial engineering verification; see [`AUDIT_REPORT_VON_STOSCH.md`](AUDIT_REPORT_VON_STOSCH.md).
 - **Stage-1 Parameter Recovery (14-Seed iDoE):** Recovers 6 mechanistic parameters (`mu_max`, `K_S`, `Y_XS`, `alpha`, `beta`, `k_La0`) via bounded Trust-Region Reflective `least_squares` with `kappa_rel = 38.18`, seed-42 max error `4.39%`, and 14-seed mean max parameter error `1.59%`.
-- **Stage-2 Serial Hybrid (`GAM-86`, `B=15` Bootstrap Ensemble):** Trained via reverse-mode discrete adjoint VJP over Patankar positivity-preserving integration using measurable PAT channels (`X_v`, `S`, `C_L`, `A`, `P`, `V`, zero `X_d` leakage). Pooled 5-regime held-out accuracy: `kd R^2 = 0.7334`, `k_La R^2 = 0.9699`, `q_A,net R^2 = 0.9010`, `mu R^2 = 0.9951`.
-- **Scale Transfer (`5 L` -> `1000 L`):** Uses scale-invariant hydrodynamic features `(P_g/V, v_tip, v_s)` calibrated at `5 L` (`134.8 RPM`, `0.205 vvm` matched operating point at `1000 L`), achieving `0.05529` hybrid normalized RMSE vs `0.34112` for the nominal mechanistic model.
+- **Stage-2 Serial Hybrid (`GAM-86`, `B=15` Bootstrap Ensemble):** Trained via reverse-mode discrete adjoint VJP over Patankar positivity-preserving integration using measurable PAT channels (`X_v`, `S`, `C_L`, `A`, `P`, `V`, zero `X_d` leakage). Pooled 5-regime held-out accuracy: `kd R^2 = 0.7320`, `k_La R^2 = 0.9806`, `q_A,net R^2 = 0.8803`, `mu R^2 = 0.9925`.
+- **Scale Transfer (`5 L` -> `1000 L`):** Uses scale-invariant hydrodynamic features `(P_g/V, v_tip, v_s)` calibrated at `5 L` (`134.8 RPM`, `0.205 vvm` matched operating point at `1000 L`), achieving `0.03687` hybrid normalized RMSE vs `0.39081` for the nominal mechanistic model.
 - **Zero-Backend Interactive 3D Web Twin (`docs/`):** Exports the trained `GAM-86` (`B=15`) ensemble (`docs/assets/twin_bundle.js`, `docs/assets/twin_bundle.json`) and runs Patankar integration, `7x7` Padé(6,6) `expm` Continuous-Discrete EKF, Joseph covariance update, and Three.js bioreactor visualization 100% client-side in any standard browser.
 
 ## Repository Layout
@@ -23,10 +23,10 @@ A grey-box bioprocess digital twin for recombinant *E. coli* BL21 fed-batch ferm
 - `mcp_server/server.py`: Model Context Protocol (`MCPServer`) server exposing deterministic bioprocess tools (`simulate_fedbatch_run`, `ingest_pat_and_estimate_state`, `replay_delayed_lims_assay`, `search_uhlendorff_campaigns`) so LLM agents delegate all ODE, EKF, and CHO-K1 empirical lookups to verified solvers.
 - `agents/deviation_graph.py` & `agents/observability.py`: 4-step stateful Bioprocess Deviation & CAPA Investigator graph (`detect_excursion` -> `run_counterfactual_controls` -> `retrieve_empirical_precedent` -> `synthesize_capa_report`) with structured node/tool latency tracing and deterministic faithfulness evaluation (`evaluate_capa_report`).
 - `app.py`: Streamlit Operator (`5 L`) and Validation Benchmark (`1000 L`) console.
-- `scripts/export_web_twin_assets.py`: Exports verified Stage-1, Stage-2, disturbance, AIC/BIC, and `1000 L` benchmark artifacts into `docs/assets/`.
+- `scripts/export_web_twin_assets.py` & `scripts/verify_repo_hygiene.py`: Export verified Stage-1, Stage-2, disturbance, AIC/BIC, and `1000 L` benchmark artifacts into `docs/assets/` and verify `.gitignore`, bundle SHA-256, Uhlendorff JSON/JS parity, and ALCOA+ provenance consistency.
 - `docs/`: Zero-backend Three.js + Canvas interactive 3D digital twin and Distill-style engineering monograph deployed via GitHub Pages.
-- `tests/`: Automated `8/8` scientific verification suite (`tests/test_hybrid_twin.py`), FastAPI/DB/MCP suite (`tests/test_service_and_mcp.py`), and CAPA agent observability/faithfulness suite (`tests/test_agent_evals.py`).
-- `Dockerfile` & `.github/workflows/ci.yml`: Reproducible container build and automated CI verification on push/PR.
+- `tests/`: Automated verification harness partitioned by pytest markers (`hygiene`, `unit`, `contract`, `agent`, `slow`) across `tests/test_repo_hygiene.py`, `tests/test_contracts_and_roundtrips.py`, `tests/test_service_and_mcp.py`, `tests/test_agent_evals.py`, and `tests/test_hybrid_twin.py`.
+- `Dockerfile` & `.github/workflows/ci.yml`: Reproducible container build and automated CI verification (fast hygiene + `not slow` suite on every push/PR; full `slow` + Von Stosch benchmark suite via `workflow_dispatch`).
 - `agents/moritz_von_stosch_auditor.md`: Literature-grounded adversarial bioprocess audit persona specification.
 
 ## Quickstart (Local Python, API, MCP & Docker)
@@ -35,12 +35,21 @@ A grey-box bioprocess digital twin for recombinant *E. coli* BL21 fed-batch ferm
 # 1. Install core + service dependencies
 pip install -e ".[service,dev]"
 
-# 2. Run fast service, persistence, MCP, and CAPA agent eval tests (<20s)
-$env:OMP_NUM_THREADS="1"; $env:MKL_NUM_THREADS="1"; $env:OPENBLAS_NUM_THREADS="1"
-pytest tests/test_service_and_mcp.py tests/test_agent_evals.py -v
+# 2. Run repository hygiene & artifact consistency check
+python scripts/verify_repo_hygiene.py
 
-# 3. Run the full 8-test scientific verification suite
-pytest tests/test_hybrid_twin.py -v
+# 3. Run fast CI check suite (hygiene + unit + contract + agent evals, skips heavy training)
+$env:OMP_NUM_THREADS="1"; $env:MKL_NUM_THREADS="1"; $env:OPENBLAS_NUM_THREADS="1"
+pytest -m "not slow" -v
+
+# Targeted fast marker subsets:
+pytest -m hygiene -v
+pytest -m contract -v
+
+# 4. Run full scientific training/simulation/benchmark suite (multi-minute)
+pytest -m slow -v
+pytest -v
+pytest agents/von_stosch_twin/test_calibration.py -v
 
 # 4. Launch the FastAPI + ALCOA+ Digital Twin service
 uvicorn api.main:app --host 0.0.0.0 --port 8000

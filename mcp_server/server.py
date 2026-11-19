@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Sequence
 from uuid import uuid4
 
 import numpy as np
@@ -22,7 +22,11 @@ from api.runtime import (
     state_dict_from_vector,
 )
 from hybrid_fedbatch_twin.controller import ClosedLoopFeedController
-from hybrid_fedbatch_twin.mechanistic import default_initial_state, simulate_bioreactor
+from hybrid_fedbatch_twin.mechanistic import (
+    default_initial_state,
+    default_operating_inputs,
+    simulate_bioreactor,
+)
 
 UHLENDORFF_DATA_DIR = ROOT_DIR / "data" / "uhlendorff_2026" / "Time-axis aligned raw data tables"
 UHLENDORFF_ARTIFACT = ROOT_DIR / "artifacts" / "uhlendorff_2026_validation.json"
@@ -46,8 +50,8 @@ def simulate_fedbatch_run(
     duration_h: float = 16.0,
     mode: Literal["hybrid", "nominal", "ground_truth"] = "hybrid",
     mu_target: float = 0.28,
-    rpm: float = 450.0,
-    vvm: float = 1.2,
+    rpm: Optional[float] = None,
+    vvm: Optional[float] = None,
     disturbance_mode: Literal["none", "aeration_drop", "feed_step"] = "none",
     dt_eval: float = 0.2,
 ) -> Dict[str, Any]:
@@ -55,12 +59,15 @@ def simulate_fedbatch_run(
     base_params, model = load_calibrated_assets()
     p_scaled = scale_params(vessel_scale_L, base_params)
     x0 = default_initial_state(p_scaled)
+    u_def = default_operating_inputs(p_scaled)
+    rpm_val = float(rpm) if rpm is not None else float(u_def.rpm)
+    vvm_val = float(vvm) if vvm is not None else float(u_def.vvm)
     ctrl = ClosedLoopFeedController(
         params=p_scaled,
         residual_model=model,
         mu_target=mu_target,
-        rpm=rpm,
-        vvm=vvm,
+        rpm=rpm_val,
+        vvm=vvm_val,
         F_max=scale_feed_cap(vessel_scale_L),
         disturbance_mode=disturbance_mode,
     )
@@ -111,8 +118,8 @@ def ingest_pat_and_estimate_state(
     y_CL: float,
     y_V: float,
     F_act: float,
-    rpm_act: float = 450.0,
-    vvm_act: float = 1.2,
+    rpm_act: Optional[float] = None,
+    vvm_act: Optional[float] = None,
     session_id: Optional[str] = None,
     vessel_scale_L: Literal[5, 50, 1000] = 5,
     batch_id: str = "FB-BL21-MCP-001",
@@ -137,14 +144,16 @@ def ingest_pat_and_estimate_state(
             twin = loaded["twin"]
             scale_l = int(loaded["vessel_scale_L"])
 
+        rpm_val = float(rpm_act) if rpm_act is not None else float(twin.last_u.rpm)
+        vvm_val = float(vvm_act) if vvm_act is not None else float(twin.last_u.vvm)
         res = twin.ingest_online_pat(
             t_h=t_h,
             y_Xv=y_Xv,
             y_CL=y_CL,
             y_V=y_V,
             F_act=F_act,
-            rpm_act=rpm_act,
-            vvm_act=vvm_act,
+            rpm_act=rpm_val,
+            vvm_act=vvm_val,
         )
         save_twin_session(db, sid, scale_l, twin)
 
@@ -160,7 +169,11 @@ def ingest_pat_and_estimate_state(
         "q_A_net_hat": float(res["q_A_net_hat"]),
         "d_m": float(res["d_m"]),
         "in_domain": bool(res["in_domain"]),
+        "undecided": bool(res["undecided"]),
+        "residual_breach": bool(res["residual_breach"]),
+        "gate_reason": str(res["gate_reason"]),
         "nis": float(res["nis"]),
+        "spe": float(res["spe"]),
     }
 
 
@@ -200,8 +213,36 @@ def replay_delayed_lims_assay(
         "x_std": state_dict_from_vector(replay["x_std"]),
         "d_m": float(replay["d_m"]),
         "in_domain": bool(replay["in_domain"]),
+        "undecided": bool(replay["undecided"]),
+        "residual_breach": bool(replay["residual_breach"]),
+        "gate_reason": str(replay["gate_reason"]),
+        "nis": float(replay["nis"]),
+        "spe": float(replay["spe"]),
+        "state_delta_l2": float(replay["state_delta_l2"]),
         "alcoa_record": audit,
     }
+
+
+def _resolve_campaign_wmse(
+    exp_id: str,
+    bench: Dict[str, Any],
+    anomalous_runs: Sequence[str],
+) -> Optional[float]:
+    """Resolve per-campaign held-out wMSE from current or legacy Uhlendorff validation artifacts."""
+    per_camp = bench.get("per_campaign_test_wmse", {})
+    if isinstance(per_camp, dict) and exp_id in per_camp:
+        return float(per_camp[exp_id])
+
+    is_anom = any(str(a) == exp_id or str(a).startswith(f"{exp_id}_") for a in anomalous_runs)
+    if is_anom and "anomaly_unmasked_wmse" in bench:
+        return float(bench["anomaly_unmasked_wmse"])
+
+    exp_lower = exp_id.lower()
+    if f"{exp_lower}_wmse" in bench:
+        return float(bench[f"{exp_lower}_wmse"])
+    if f"{exp_lower}_unmasked_wmse" in bench:
+        return float(bench[f"{exp_lower}_unmasked_wmse"])
+    return None
 
 
 @mcp.tool()
@@ -220,8 +261,10 @@ def search_uhlendorff_campaigns(
     meta = validation.get("dataset_metadata", {})
     dev_campaigns = set(meta.get("dev_campaigns", []))
     test_campaigns = set(meta.get("test_campaigns", []))
+    anomalous_runs = list(meta.get("anomalous_runs", []))
     bench = validation.get("benchmark_comparison", {}).get("remediated", {})
     held_out = validation.get("held_out_trajectories", {})
+    vol_series = validation.get("mass_balance_discovery", {}).get("volume_series", {})
 
     runs: List[Dict[str, Any]] = []
     if UHLENDORFF_DATA_DIR.exists():
@@ -240,13 +283,7 @@ def search_uhlendorff_campaigns(
             if split and run_split != split:
                 continue
 
-            wmse_val: Optional[float] = None
-            if exp_id == "EXP012" and "exp012_wmse" in bench:
-                wmse_val = float(bench["exp012_wmse"])
-            elif exp_id == "EXP009" and "exp009_wmse" in bench:
-                wmse_val = float(bench["exp009_wmse"])
-            elif exp_id == "EXP011" and "exp011_unmasked_wmse" in bench:
-                wmse_val = float(bench["exp011_unmasked_wmse"])
+            wmse_val = _resolve_campaign_wmse(exp_id, bench, anomalous_runs)
 
             if max_wmse is not None and (wmse_val is None or wmse_val > max_wmse):
                 continue
@@ -278,7 +315,12 @@ def search_uhlendorff_campaigns(
         all_exps = sorted(dev_campaigns | test_campaigns) or [f"EXP{i:03d}" for i in range(1, 13)]
         for exp_id in all_exps:
             ho_entry = held_out.get(exp_id, {})
-            run_mode = ho_entry.get("mode") or ("fed-batch" if exp_id in {"EXP010", "EXP011", "EXP012"} else "batch")
+            if ho_entry.get("mode"):
+                run_mode = str(ho_entry["mode"])
+            elif isinstance(vol_series, dict) and exp_id in vol_series:
+                run_mode = "fed-batch"
+            else:
+                run_mode = "fed-batch" if exp_id in {"EXP010", "EXP011", "EXP012"} else "batch"
             run_split = "test" if exp_id in test_campaigns else "dev"
 
             if campaign_id and exp_id.upper() != campaign_id.upper():
@@ -288,13 +330,7 @@ def search_uhlendorff_campaigns(
             if split and run_split != split:
                 continue
 
-            wmse_val = None
-            if exp_id == "EXP012" and "exp012_wmse" in bench:
-                wmse_val = float(bench["exp012_wmse"])
-            elif exp_id == "EXP009" and "exp009_wmse" in bench:
-                wmse_val = float(bench["exp009_wmse"])
-            elif exp_id == "EXP011" and "exp011_unmasked_wmse" in bench:
-                wmse_val = float(bench["exp011_unmasked_wmse"])
+            wmse_val = _resolve_campaign_wmse(exp_id, bench, anomalous_runs)
 
             if max_wmse is not None and (wmse_val is None or wmse_val > max_wmse):
                 continue

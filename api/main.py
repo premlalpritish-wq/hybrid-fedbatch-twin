@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Optional
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from agents.deviation_graph import run_deviation_investigation
@@ -14,6 +14,7 @@ from hybrid_fedbatch_twin.controller import ClosedLoopFeedController, benchmark_
 from hybrid_fedbatch_twin.mechanistic import (
     OperatingInputs,
     default_initial_state,
+    default_operating_inputs,
     simulate_bioreactor,
 )
 
@@ -84,6 +85,7 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
         )
         save_twin_session(db, session_id, req.vessel_scale_L, twin)
         rates = twin.ekf.current_rates(twin.last_u)
+        gate = twin.ekf.evaluate_gate(rates=rates)
         x_std = twin.ekf.P.diagonal().clip(min=0.0) ** 0.5
         return TwinStateResponse(
             session_id=session_id,
@@ -95,8 +97,11 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
             current_std=state_dict_from_vector(x_std),
             params_sha256=twin.params_sha256,
             model_sha256=twin.model_sha256,
-            d_m=float(rates["d_m"]),
-            in_domain=bool(rates["in_domain"] > 0.5),
+            d_m=float(gate["d_m"]),
+            in_domain=bool(gate["in_domain"]),
+            undecided=bool(gate["undecided"]),
+            residual_breach=bool(gate["residual_breach"]),
+            gate_reason=str(gate["gate_reason"]),
         )
 
     @app.get("/twins/{session_id}", response_model=TwinStateResponse)
@@ -107,6 +112,7 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"Twin session '{session_id}' not found.")
         twin = loaded["twin"]
         rates = twin.ekf.current_rates(twin.last_u)
+        gate = twin.ekf.evaluate_gate(rates=rates)
         x_std = twin.ekf.P.diagonal().clip(min=0.0) ** 0.5
         return TwinStateResponse(
             session_id=session_id,
@@ -118,8 +124,11 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
             current_std=state_dict_from_vector(x_std),
             params_sha256=twin.params_sha256,
             model_sha256=twin.model_sha256,
-            d_m=float(rates["d_m"]),
-            in_domain=bool(rates["in_domain"] > 0.5),
+            d_m=float(gate["d_m"]),
+            in_domain=bool(gate["in_domain"]),
+            undecided=bool(gate["undecided"]),
+            residual_breach=bool(gate["residual_breach"]),
+            gate_reason=str(gate["gate_reason"]),
         )
 
     @app.post("/twins/{session_id}/pat", response_model=PatIngestResponse)
@@ -159,7 +168,11 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
             d_m=res["d_m"],
             d_m_kla=res["d_m_kla"],
             in_domain=res["in_domain"],
+            undecided=res["undecided"],
+            residual_breach=res["residual_breach"],
+            gate_reason=res["gate_reason"],
             nis=res["nis"],
+            spe=res["spe"],
         )
 
     @app.post("/twins/{session_id}/atline", response_model=AtlineAssayResponse)
@@ -193,6 +206,12 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
             mu_hat=res["mu_hat"],
             d_m=res["d_m"],
             in_domain=res["in_domain"],
+            undecided=res["undecided"],
+            residual_breach=res["residual_breach"],
+            gate_reason=res["gate_reason"],
+            nis=res["nis"],
+            spe=res["spe"],
+            state_delta_l2=res["state_delta_l2"],
         )
 
     @app.post("/twins/{session_id}/control", response_model=ControlActionResponse)
@@ -205,14 +224,16 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"Twin session '{session_id}' not found.")
         twin = loaded["twin"]
         f_max = req.F_max if req.F_max is not None else scale_feed_cap(loaded["vessel_scale_L"])
+        rpm_val = float(req.rpm) if req.rpm is not None else float(twin.last_u.rpm)
+        vvm_val = float(req.vvm) if req.vvm is not None else float(twin.last_u.vvm)
         ctrl = ClosedLoopFeedController(
             params=twin.params,
             residual_model=model,
             mu_target=req.mu_target,
             S_set=req.S_set,
             A_limit=req.A_limit,
-            rpm=req.rpm,
-            vvm=req.vvm,
+            rpm=rpm_val,
+            vvm=vvm_val,
             F_max=f_max,
             disturbance_mode=req.disturbance_mode,
         )
@@ -228,17 +249,29 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
             k_La_hat=act["k_La_hat"],
             d_m=act["d_m"],
             in_domain=act["in_domain"],
+            undecided=act["undecided"],
+            residual_breach=act["residual_breach"],
+            gate_reason=act["gate_reason"],
+            fallback_active=act["fallback_active"],
+            control_mode=act["control_mode"],
+            escalation_event=act["escalation_event"],
+            nis=act["nis"],
+            spe=act["spe"],
             x_hat=state_dict_from_vector(act["x_hat"]),
             x_std=state_dict_from_vector(act["x_std"]),
         )
 
     @app.get("/twins/{session_id}/audit", response_model=AuditRecordResponse)
-    def get_audit(session_id: str, db: Session = Depends(get_db)) -> AuditRecordResponse:
+    def get_audit(
+        session_id: str,
+        max_entries: Optional[int] = Query(default=None, ge=1),
+        db: Session = Depends(get_db),
+    ) -> AuditRecordResponse:
         _, model = load_calibrated_assets()
         loaded = load_twin_session(db, session_id, model)
         if loaded is None:
             raise HTTPException(status_code=404, detail=f"Twin session '{session_id}' not found.")
-        record = loaded["twin"].to_audit_record()
+        record = loaded["twin"].to_audit_record(max_entries=max_entries)
         return AuditRecordResponse(session_id=session_id, **record)
 
     @app.post("/twins/{session_id}/investigate", response_model=InvestigateResponse)
@@ -272,13 +305,16 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
         base_params, model = load_calibrated_assets()
         p_scaled = scale_params(req.vessel_scale_L, base_params)
         x0 = default_initial_state(p_scaled)
+        u_def = default_operating_inputs(p_scaled)
+        rpm_val = float(req.rpm) if req.rpm is not None else float(u_def.rpm)
+        vvm_val = float(req.vvm) if req.vvm is not None else float(u_def.vvm)
         f_max = req.F_max if req.F_max is not None else scale_feed_cap(req.vessel_scale_L)
         ctrl = ClosedLoopFeedController(
             params=p_scaled,
             residual_model=model,
             mu_target=req.mu_target,
-            rpm=req.rpm,
-            vvm=req.vvm,
+            rpm=rpm_val,
+            vvm=vvm_val,
             F_max=f_max,
             disturbance_mode=req.disturbance_mode,
         )
@@ -313,14 +349,17 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
     def run_benchmark(req: BenchmarkRequest) -> BenchmarkResponse:
         base_params, model = load_calibrated_assets()
         p_scaled = scale_params(req.vessel_scale_L, base_params)
+        u_def = default_operating_inputs(p_scaled)
+        rpm_val = float(req.rpm) if req.rpm is not None else float(u_def.rpm)
+        vvm_val = float(req.vvm) if req.vvm is not None else float(u_def.vvm)
         f_max = req.F_max if req.F_max is not None else scale_feed_cap(req.vessel_scale_L)
         bench = benchmark_controllers(
             params=p_scaled,
             residual_model=model,
             duration_h=req.duration_h,
             mu_target=req.mu_target,
-            rpm=req.rpm,
-            vvm=req.vvm,
+            rpm=rpm_val,
+            vvm=vvm_val,
             F_max=f_max,
             plant_params=p_scaled,
         )

@@ -19,6 +19,7 @@ from .estimator import (
     HybridExtendedKalmanFilter,
     Q_DEFAULT,
     run_twin_estimation_loop,
+    verify_audit_chain,
 )
 from .mechanistic import (
     BioreactorParams,
@@ -28,6 +29,8 @@ from .mechanistic import (
     compute_hydrodynamics,
     compute_rates,
     default_initial_state,
+    default_operating_inputs,
+    disturbance_profile,
     integrate_step,
     nominal_kla,
     simulate_bioreactor,
@@ -53,6 +56,8 @@ __all__ = [
     "compute_hydrodynamics",
     "compute_rates",
     "default_initial_state",
+    "default_operating_inputs",
+    "disturbance_profile",
     "integrate_step",
     "nominal_kla",
     "simulate_bioreactor",
@@ -67,6 +72,7 @@ __all__ = [
     "HybridExtendedKalmanFilter",
     "BioreactorDigitalTwin",
     "run_twin_estimation_loop",
+    "verify_audit_chain",
     "ClosedLoopFeedController",
     "NominalMechanisticController",
     "OpenLoopExponentialController",

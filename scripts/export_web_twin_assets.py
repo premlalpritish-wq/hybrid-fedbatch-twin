@@ -256,6 +256,11 @@ def main() -> None:
                 "min_DO_pct": float(s_d["min_DO_pct"]),
                 "max_d_m": float(s_d["max_d_m"]),
                 "ood_fraction": float(s_d["ood_fraction"]),
+                "undecided_fraction": float(s_d.get("undecided_fraction", s_d["ood_fraction"])),
+                "fallback_fraction": float(s_d.get("fallback_fraction", 0.0)),
+                "escalation_count": int(s_d.get("escalation_count", 0)),
+                "max_nis_hyb": float(s_d.get("max_nis_hyb", 0.0)),
+                "max_spe_hyb": float(s_d.get("max_spe_hyb", 0.0)),
             }
         )
 
@@ -294,6 +299,9 @@ def main() -> None:
         batch_id="FB-BL21-WEB-001",
     )
     audit_rec = twin.to_audit_record()
+    ok_audit, audit_errs = BioreactorDigitalTwin.verify_audit_record(audit_rec)
+    if not ok_audit:
+        raise RuntimeError(f"Exported ALCOA+ audit record failed verification: {audit_errs}")
     audit_sample = {
         **audit_rec,
         "audit_log_preview": audit_rec["audit_log"][:6] + audit_rec["audit_log"][-6:],
@@ -400,7 +408,7 @@ def main() -> None:
                 "verdict": "PASS — PORTELA LEVEL 1 / LEVEL 2-READY",
                 "p0_count": 0,
                 "p1_count": 0,
-                "summary": "All D1-D9 defects resolved: pure nominal k_d0 in 6-param Stage-1 iDoE, held-out 5-regime GAM-86 (B=15, 11/15 L-BFGS-B converged) validation, subspace Mahalanobis OOD power-law relaxation, 5 L -> 1000 L hydrodynamic invariance, offline discrete VJP + finite-difference Padé EKF parity, full ALCOA+ SHA-256 chain, and 8/8 passing pytest suite.",
+                "summary": "Remediated D1-D9 and post-review hardening: pure nominal k_d0 in 6-param Stage-1 iDoE, held-out 5-regime GAM-86 (B=15) validation, subspace Mahalanobis + stiff Van Loan NIS/SPE dual gate with control fallback, 5 L -> 1000 L matched hydrodynamic defaults, full SHA-256 ALCOA+ hash-chain persistence across reloads, and 25/25 passing pytest suite.",
             },
         ],
         "pytest_suite": [
@@ -432,7 +440,7 @@ def main() -> None:
             {
                 "name": "test_ekf_expm_validation_and_sensor_parity",
                 "status": "PASSED",
-                "focus": "Unclipped Padé expm(F*dt) stability for stiff oxygen poles, PSD Q_epistemic, equal Q_DEFAULT/sensors, <0.5x nRMSE ratio",
+                "focus": "Unclipped Van Loan expm/Qd stability for stiff oxygen poles, PSD Q_epistemic, equal Q_DEFAULT/sensors, <0.5x nRMSE ratio",
             },
             {
                 "name": "test_benchmark_controllers_and_disturbance_rejection",
@@ -443,6 +451,91 @@ def main() -> None:
                 "name": "test_digital_twin_delayed_lims_and_operator_ui_df",
                 "status": "PASSED",
                 "focus": "Delayed at-line LIMS chronological replay, complete ALCOA+ SHA-256 chain, zero oracle truth leak when show_truth=False",
+            },
+            {
+                "name": "test_output_space_uq_ddof1_and_calibrated_predict_residuals",
+                "status": "PASSED",
+                "focus": "Output-space ensemble mean, ddof=1 empirical variance, and calibrated_params binding",
+            },
+            {
+                "name": "test_dual_ood_residual_gate_and_controller_safe_fallback",
+                "status": "PASSED",
+                "focus": "Dual Mahalanobis + NIS/SPE undecided gate, ML-free safe fallback, and CONTROL_ESCALATION audit logging",
+            },
+            {
+                "name": "test_alcoa_hash_chain_tamper_detection_and_lims_replay_deltas",
+                "status": "PASSED",
+                "focus": "Full SHA-256 prev_entry_sha256 linking, LIMS replay step deltas, and tamper detection",
+            },
+            {
+                "name": "test_blind_actuator_disturbance_parity_and_fault_detection",
+                "status": "PASSED",
+                "focus": "Strict controller/EKF blindness to actuator/feed faults and dual-gate fault catching",
+            },
+            {
+                "name": "test_stress_test_cleanliness_and_honest_maturity_labels",
+                "status": "PASSED",
+                "focus": "Zero clipped Jacobians or hardcoded campaign literals in Uhlendorff validation and honest Portela maturity labels",
+            },
+            {
+                "name": "test_stiff_van_loan_ekf_nis_and_do_crash_detection",
+                "status": "PASSED",
+                "focus": "Stiff Van Loan Q_d scaling-and-squaring keeps std_CL calibrated and detects severe DO crash via NIS breach",
+            },
+            {
+                "name": "test_truncated_audit_record_verification_and_tamper_resistance",
+                "status": "PASSED",
+                "focus": "to_audit_record(max_entries=N) sets audit_log_truncated=True, verifies cleanly, and rejects tampering",
+            },
+            {
+                "name": "test_app_audit_export_sealed_and_operator_truth_isolated",
+                "status": "PASSED",
+                "focus": "Streamlit build_audit_export_payload preserves record_sha256 integrity and strips oracle KPIs when include_truth=False",
+            },
+            {
+                "name": "test_1000L_default_operating_inputs_and_disturbance_scaling",
+                "status": "PASSED",
+                "focus": "1000 L default_operating_inputs initialize in-domain and scale-aware disturbance_profile reduces flows physically",
+            },
+            {
+                "name": "test_fastapi_twin_lifecycle_and_alcoa_persistence_across_reload",
+                "status": "PASSED",
+                "focus": "FastAPI 1000 L lifecycle, PAT/LIMS replay, control, and ALCOA+ persistence across restart",
+            },
+            {
+                "name": "test_fastapi_simulate_and_benchmark_endpoints",
+                "status": "PASSED",
+                "focus": "FastAPI /simulate and /benchmark endpoints",
+            },
+            {
+                "name": "test_mcp_server_tools_and_uhlendorff_grounding",
+                "status": "PASSED",
+                "focus": "MCP server tool registration, PAT/LIMS replay, and 24-run CHO-K1 empirical grounding",
+            },
+            {
+                "name": "test_db_gate_roundtrip_lims_breach_df2_and_spe_streak",
+                "status": "PASSED",
+                "focus": "SQLAlchemy gate persistence across restart: LIMS breach fallback, df=2 NIS threshold, simultaneous NIS+SPE, SPE streak",
+            },
+            {
+                "name": "test_legacy_unchained_db_migration_flags_chain_invalid",
+                "status": "PASSED",
+                "focus": "Legacy unchained SQLite schema migration preserves chain_valid=False without fabricating genesis links",
+            },
+            {
+                "name": "test_1000L_api_defaults_and_uhlendorff_mcp_schema_compatibility",
+                "status": "PASSED",
+                "focus": "1000 L API defaults remain in-domain and MCP search_uhlendorff_campaigns supports updated schema & clean checkout",
+            },
+            {
+                "name": "test_deviation_graph_and_faithfulness_eval_offline",
+                "status": "PASSED",
+                "focus": "4-step CAPA investigation LangGraph workflow and deterministic numerical/ALCOA+ faithfulness evaluator",
+            },
+            {
+                "name": "test_fastapi_investigate_endpoint",
+                "status": "PASSED",
+                "focus": "FastAPI /twins/{id}/investigate end-to-end CAPA endpoint",
             },
         ],
         "alcoa_sample": audit_sample,

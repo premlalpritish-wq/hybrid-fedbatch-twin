@@ -7,10 +7,11 @@ import json
 import os
 from typing import Any, Dict, List, Optional
 import numpy as np
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, create_engine, delete, select
+from scipy.stats import chi2
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, create_engine, delete, inspect, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
-from hybrid_fedbatch_twin.estimator import BioreactorDigitalTwin
+from hybrid_fedbatch_twin.estimator import GENESIS_ENTRY_SHA256, BioreactorDigitalTwin
 from hybrid_fedbatch_twin.mechanistic import BioreactorParams, ResidualCorrectorProtocol
 
 from .runtime import deserialize_operating_inputs, serialize_operating_inputs
@@ -35,6 +36,7 @@ class TwinSessionRow(Base):
     model_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     t_now_h: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     last_u_json: Mapped[str] = mapped_column(Text, nullable=False)
+    ekf_gate_state_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -76,6 +78,9 @@ class AlcoaAuditRow(Base):
     process_t_h: Mapped[float] = mapped_column(Float, nullable=False)
     params_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     model_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    prev_entry_sha256: Mapped[str] = mapped_column(
+        String(64), nullable=False, default=GENESIS_ENTRY_SHA256
+    )
     detail_json: Mapped[str] = mapped_column(Text, nullable=False)
     entry_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
 
@@ -86,6 +91,21 @@ def create_db_engine_and_sessionmaker(database_url: Optional[str] = None):
     connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
     engine = create_engine(url, connect_args=connect_args, future=True)
     Base.metadata.create_all(engine)
+    inspector = inspect(engine)
+    audit_cols = {col["name"] for col in inspector.get_columns("alcoa_audit_entries")}
+    if "prev_entry_sha256" not in audit_cols:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "ALTER TABLE alcoa_audit_entries ADD COLUMN prev_entry_sha256 VARCHAR(64) NOT NULL DEFAULT ''"
+                )
+            )
+    session_cols = {col["name"] for col in inspector.get_columns("twin_sessions")}
+    if "ekf_gate_state_json" not in session_cols:
+        with engine.begin() as conn:
+            conn.execute(
+                text("ALTER TABLE twin_sessions ADD COLUMN ekf_gate_state_json TEXT")
+            )
     SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
     return engine, SessionLocal
 
@@ -101,6 +121,25 @@ def save_twin_session(
     params_json = json.dumps(twin.params.to_dict(), sort_keys=True)
     meta_json = json.dumps(twin.calibration_metadata, sort_keys=True, default=str)
     last_u_json = json.dumps(serialize_operating_inputs(twin.last_u), sort_keys=True)
+    gate_state_json = json.dumps(
+        {
+            "last_nis": float(twin.ekf.last_nis),
+            "last_spe": float(twin.ekf.last_spe),
+            "last_obs_dim": int(twin.ekf.last_obs_dim),
+            "last_nis_threshold": float(twin.ekf.last_nis_threshold),
+            "last_spe_threshold": float(twin.ekf.last_spe_threshold),
+            "last_nis_breach": bool(twin.ekf.last_nis_breach),
+            "last_spe_breach": bool(twin.ekf.last_spe_breach),
+            "last_residual_breach": bool(twin.ekf.last_residual_breach),
+            "spe_persist_streak": int(twin.ekf._spe_persist_streak),
+            "gate_alpha": float(twin.ekf.gate_alpha),
+            "nis_threshold_override": twin.ekf._nis_threshold_override,
+            "spe_threshold_override": twin.ekf._spe_threshold_override,
+            "spe_persist_threshold_override": twin.ekf._spe_persist_threshold_override,
+            "spe_persist_steps": int(twin.ekf.spe_persist_steps),
+        },
+        sort_keys=True,
+    )
 
     if row is None:
         row = TwinSessionRow(
@@ -114,11 +153,13 @@ def save_twin_session(
             model_sha256=twin.model_sha256,
             t_now_h=float(twin.t_now),
             last_u_json=last_u_json,
+            ekf_gate_state_json=gate_state_json,
         )
         db.add(row)
     else:
         row.t_now_h = float(twin.t_now)
         row.last_u_json = last_u_json
+        row.ekf_gate_state_json = gate_state_json
         row.updated_at = datetime.now(timezone.utc)
 
     # Replace events (atline replay can insert & update later events deterministically)
@@ -157,6 +198,7 @@ def save_twin_session(
                     process_t_h=float(entry["process_t_h"]),
                     params_sha256=str(entry["params_sha256"]),
                     model_sha256=str(entry["model_sha256"]),
+                    prev_entry_sha256=str(entry.get("prev_entry_sha256", "")),
                     detail_json=json.dumps(entry["detail"], sort_keys=True, default=str),
                     entry_sha256=str(entry["entry_sha256"]),
                 )
@@ -234,9 +276,80 @@ def load_twin_session(
             "process_t_h": float(a.process_t_h),
             "params_sha256": a.params_sha256,
             "model_sha256": a.model_sha256,
+            "prev_entry_sha256": a.prev_entry_sha256,
             "detail": json.loads(a.detail_json),
             "entry_sha256": a.entry_sha256,
         }
         for a in audit_rows
     ]
+    if row.ekf_gate_state_json is not None:
+        gate_state = json.loads(row.ekf_gate_state_json)
+        if "gate_alpha" in gate_state:
+            twin.ekf.gate_alpha = float(gate_state["gate_alpha"])
+        twin.ekf._nis_threshold_override = gate_state.get("nis_threshold_override")
+        twin.ekf._spe_threshold_override = gate_state.get("spe_threshold_override")
+        twin.ekf._spe_persist_threshold_override = gate_state.get("spe_persist_threshold_override")
+        if "spe_persist_steps" in gate_state:
+            twin.ekf.spe_persist_steps = max(1, int(gate_state["spe_persist_steps"]))
+        twin.ekf.last_nis = float(gate_state.get("last_nis", 0.0))
+        twin.ekf.last_spe = float(gate_state.get("last_spe", 0.0))
+        twin.ekf.last_obs_dim = int(gate_state.get("last_obs_dim", 0))
+        twin.ekf.last_nis_threshold = float(gate_state.get("last_nis_threshold", twin.ekf.last_nis_threshold))
+        twin.ekf.last_spe_threshold = float(gate_state.get("last_spe_threshold", twin.ekf.last_spe_threshold))
+        twin.ekf.last_nis_breach = bool(gate_state.get("last_nis_breach", False))
+        twin.ekf.last_spe_breach = bool(gate_state.get("last_spe_breach", False))
+        twin.ekf.last_residual_breach = bool(
+            gate_state.get(
+                "last_residual_breach",
+                twin.ekf.last_nis_breach or twin.ekf.last_spe_breach,
+            )
+        )
+        twin.ekf._spe_persist_streak = int(gate_state.get("spe_persist_streak", 0))
+    else:
+        for entry in reversed(twin.audit_log):
+            detail = entry.get("detail", {})
+            if isinstance(detail, dict) and "nis" in detail:
+                twin.ekf.last_nis = float(detail["nis"])
+                twin.ekf.last_spe = float(detail.get("spe", 0.0))
+                if "obs_dim" in detail and int(detail["obs_dim"]) > 0:
+                    obs_dim = int(detail["obs_dim"])
+                elif entry.get("event_type") == "ONLINE_PAT":
+                    obs_dim = 3
+                elif entry.get("event_type") in ("ATLINE_LIMS", "ATLINE_LIMS_REPLAY"):
+                    obs_dim = 2 if detail.get("y_P") is None else 3
+                else:
+                    obs_dim = 3
+                twin.ekf.last_obs_dim = obs_dim
+                chi2_crit = float(chi2.ppf(twin.ekf.gate_alpha, df=max(1, obs_dim)))
+                nis_thresh = (
+                    chi2_crit
+                    if twin.ekf._nis_threshold_override is None
+                    else twin.ekf._nis_threshold_override
+                )
+                spe_thresh = (
+                    (10.0 * chi2_crit)
+                    if twin.ekf._spe_threshold_override is None
+                    else twin.ekf._spe_threshold_override
+                )
+                twin.ekf.last_nis_threshold = float(nis_thresh)
+                twin.ekf.last_spe_threshold = float(spe_thresh)
+                nis_breach = (
+                    bool(detail["nis_breach"])
+                    if "nis_breach" in detail
+                    else bool(twin.ekf.last_nis > nis_thresh)
+                )
+                spe_breach = (
+                    bool(detail["spe_breach"])
+                    if "spe_breach" in detail
+                    else bool(
+                        twin.ekf.last_spe > spe_thresh
+                        or (bool(detail.get("residual_breach", False)) and not nis_breach)
+                    )
+                )
+                res_breach = bool(detail.get("residual_breach", False) or nis_breach or spe_breach)
+                twin.ekf.last_nis_breach = nis_breach
+                twin.ekf.last_spe_breach = spe_breach
+                twin.ekf.last_residual_breach = res_breach
+                twin.ekf._spe_persist_streak = int(detail.get("spe_persist_streak", 0))
+                break
     return {"twin": twin, "vessel_scale_L": int(row.vessel_scale_L)}

@@ -5,9 +5,16 @@ on:
     branches: [main, master]
   pull_request:
     branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      run_full_suite:
+        description: "Run heavy multi-minute simulation and training tests (-m slow and von_stosch_twin)"
+        required: false
+        default: false
+        type: boolean
 
 jobs:
-  test:
+  fast-checks:
     runs-on: ubuntu-latest
     env:
       OMP_NUM_THREADS: "1"
@@ -26,8 +33,36 @@ jobs:
       - name: Install package with service and dev dependencies
         run: pip install -e ".[service,dev]"
 
-      - name: Run FastAPI, persistence, MCP, and CAPA agent eval suites
-        run: pytest tests/test_service_and_mcp.py tests/test_agent_evals.py -v
+      - name: Run automated repository hygiene and artifact verification
+        run: python scripts/verify_repo_hygiene.py
 
-      - name: Run core physics boundary non-negativity regression check
-        run: pytest tests/test_hybrid_twin.py -k test_boundary_nonnegativity_and_overflow_stoichiometry -v
+      - name: Run fast unit, hygiene, contract, and agent suites
+        run: pytest -m "not slow" -v --durations=10
+
+  full-scientific-suite:
+    needs: fast-checks
+    if: github.event_name == 'workflow_dispatch' && inputs.run_full_suite == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install package with service and dev dependencies
+        run: pip install -e ".[service,dev]"
+
+      - name: Run slow training, closed-loop, and benchmark tests
+        run: pytest -m slow -v --durations=10
+
+      - name: Run Von Stosch reference calibration benchmarks
+        run: pytest agents/von_stosch_twin/test_calibration.py -v

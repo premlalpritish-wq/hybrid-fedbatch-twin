@@ -27,6 +27,9 @@ class TwinStateResponse(BaseModel):
     model_sha256: str
     d_m: float
     in_domain: bool
+    undecided: bool = False
+    residual_breach: bool = False
+    gate_reason: str = "nominal"
 
 
 class PatIngestRequest(BaseModel):
@@ -55,7 +58,11 @@ class PatIngestResponse(BaseModel):
     d_m: float
     d_m_kla: float
     in_domain: bool
+    undecided: bool = False
+    residual_breach: bool = False
+    gate_reason: str = "nominal"
     nis: float
+    spe: float = 0.0
 
 
 class AtlineAssayRequest(BaseModel):
@@ -78,6 +85,12 @@ class AtlineAssayResponse(BaseModel):
     mu_hat: float
     d_m: float
     in_domain: bool
+    undecided: bool = False
+    residual_breach: bool = False
+    gate_reason: str = "nominal"
+    nis: float = 0.0
+    spe: float = 0.0
+    state_delta_l2: float = 0.0
 
 
 class ControlActionRequest(BaseModel):
@@ -87,8 +100,8 @@ class ControlActionRequest(BaseModel):
     mu_target: float = Field(default=0.28, gt=0.0, le=0.8)
     S_set: float = Field(default=0.25, ge=0.0, le=10.0)
     A_limit: float = Field(default=1.8, gt=0.0, le=20.0)
-    rpm: float = Field(default=450.0, ge=50.0, le=1200.0)
-    vvm: float = Field(default=1.2, ge=0.01, le=5.0)
+    rpm: Optional[float] = Field(default=None, ge=50.0, le=1200.0)
+    vvm: Optional[float] = Field(default=None, ge=0.01, le=5.0)
     F_max: Optional[float] = Field(default=None, gt=0.0)
     disturbance_mode: Literal["none", "aeration_drop", "feed_step"] = "none"
 
@@ -103,6 +116,14 @@ class ControlActionResponse(BaseModel):
     k_La_hat: float
     d_m: float
     in_domain: bool
+    undecided: bool = False
+    residual_breach: bool = False
+    gate_reason: str = "nominal"
+    fallback_active: bool = False
+    control_mode: str = "hybrid_adaptive"
+    escalation_event: Optional[Dict[str, Any]] = None
+    nis: float = 0.0
+    spe: float = 0.0
     x_hat: Dict[str, float]
     x_std: Dict[str, float]
 
@@ -115,11 +136,14 @@ class AuditRecordResponse(BaseModel):
     t_now_h: float
     params_sha256: str
     model_sha256: str
+    chain_head_sha256: str = ""
+    chain_valid: bool = True
     record_sha256: str
     calibration_metadata: Dict[str, Any]
     current_state: Dict[str, float]
     current_std: Dict[str, float]
     audit_log_count: int
+    audit_log_truncated: bool = False
     audit_log: List[Dict[str, Any]]
 
 
@@ -131,8 +155,8 @@ class SimulateRequest(BaseModel):
     dt_eval: float = Field(default=0.2, gt=0.01, le=2.0)
     mode: Literal["hybrid", "nominal", "ground_truth"] = "hybrid"
     mu_target: float = Field(default=0.28, gt=0.0, le=0.8)
-    rpm: float = Field(default=450.0, ge=50.0, le=1200.0)
-    vvm: float = Field(default=1.2, ge=0.01, le=5.0)
+    rpm: Optional[float] = Field(default=None, ge=50.0, le=1200.0)
+    vvm: Optional[float] = Field(default=None, ge=0.01, le=5.0)
     F_max: Optional[float] = Field(default=None, gt=0.0)
     disturbance_mode: Literal["none", "aeration_drop", "feed_step"] = "none"
 
@@ -161,8 +185,8 @@ class BenchmarkRequest(BaseModel):
     vessel_scale_L: Literal[5, 50, 1000] = 5
     duration_h: float = Field(default=12.0, gt=1.0, le=48.0)
     mu_target: float = Field(default=0.28, gt=0.0, le=0.8)
-    rpm: float = Field(default=450.0, ge=50.0, le=1200.0)
-    vvm: float = Field(default=1.2, ge=0.01, le=5.0)
+    rpm: Optional[float] = Field(default=None, ge=50.0, le=1200.0)
+    vvm: Optional[float] = Field(default=None, ge=0.01, le=5.0)
     F_max: Optional[float] = Field(default=None, gt=0.0)
 
 
