@@ -66,6 +66,16 @@ python -m hybrid_fedbatch_twin.cli --mode all --export-json results_summary.json
 streamlit run app.py
 ```
 
+## GxP Validation & Regulatory Traceability
+
+Consistent with the **Portela Level 1 Offline Digital Model / Level 2-Ready Soft-Sensor Architecture** classification, the repository includes an automated validation and regulatory traceability package anchored directly to verified AST symbols and test suites:
+
+- **[Requirements Traceability Matrix (`docs/validation/RTM.md`)](docs/validation/RTM.md):** Programmatically generated and verified by `scripts/generate_rtm.py --check` (`19` requirements, `47` automated test links, `0` orphans/broken links).
+- **[Open Wet-Lab & GMP Facility Boundaries (`docs/validation/OPEN_ASSUMPTIONS_AND_GAPS.md`)](docs/validation/OPEN_ASSUMPTIONS_AND_GAPS.md):** Explicit separation of verified codebase capabilities from open wet-lab re-calibration, live OT/historian, enterprise IdP/2FA, and site QA prerequisites.
+- **[FDA CSA / GAMP 5 Risk Grid (`docs/validation/FDA_CSA_GAMP5_RISK_GRID.md`)](docs/validation/FDA_CSA_GAMP5_RISK_GRID.md):** Risk-based assurance mapping across physics, EKF, OT/LIMS adapters, least-privilege MCP, CAPA guardrails, Part 11 records, and Medallion MLOps.
+- **[FDA 7-Step Model Credibility Assessment (`docs/validation/FDA_MODEL_CREDIBILITY_7STEP.md`)](docs/validation/FDA_MODEL_CREDIBILITY_7STEP.md):** Context of Use, verification, UQ (`ddof=1`, `NIS`/`SPE`, Van Loan `_discretize_linear_gaussian`), and Uhlendorff CHO-K1 validation (`8.61 / 10.00 -> GO (PASS)`).
+- **[ICH Q14 / Q12 Lifecycle Governance (`docs/validation/ICH_Q14_Q12_LIFECYCLE_GOVERNANCE.md`)](docs/validation/ICH_Q14_Q12_LIFECYCLE_GOVERNANCE.md):** ATP/PTP, subspace Mahalanobis + `NIS`/`SPE` MODR, Established Conditions, and offline-retraining PACMP.
+
 ## Notes & Disclaimers
 
 - **Industrial Motivation:** The problem framing (grey-box fed-batch modeling across scales, PAT sensor fusion, and closed-loop `mu-stat` control) draws inspiration from public upstream cell-culture and fermentation modeling workflows (`R-108742`). All kinetics, disturbances, and datasets in this repository are synthetic simulations.

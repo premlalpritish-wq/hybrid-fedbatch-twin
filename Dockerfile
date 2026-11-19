@@ -13,7 +13,10 @@ COPY hybrid_fedbatch_twin ./hybrid_fedbatch_twin
 COPY api ./api
 COPY mcp_server ./mcp_server
 COPY agents ./agents
+COPY mlops ./mlops
+COPY scripts ./scripts
 COPY docs/assets/twin_bundle.json ./docs/assets/twin_bundle.json
+COPY docs/validation ./docs/validation
 COPY artifacts/uhlendorff_2026_validation.json ./artifacts/uhlendorff_2026_validation.json
 
 RUN pip install --no-cache-dir -e ".[service]"

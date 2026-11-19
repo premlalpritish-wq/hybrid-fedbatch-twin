@@ -36,7 +36,10 @@ jobs:
       - name: Run automated repository hygiene and artifact verification
         run: python scripts/verify_repo_hygiene.py
 
-      - name: Run fast unit, hygiene, contract, and agent suites
+      - name: Verify automated GxP Requirements Traceability Matrix (RTM)
+        run: python scripts/generate_rtm.py --check
+
+      - name: Run fast unit, hygiene, contract, agent, mlops, and validation suites
         run: pytest -m "not slow" -v --durations=10
 
   full-scientific-suite:

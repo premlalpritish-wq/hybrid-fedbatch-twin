@@ -195,10 +195,13 @@ def evaluate_capa_report(
     if not _SHA256_RE.match(report.alcoa_record_sha256):
         alcoa_detail = f"Invalid SHA-256 format: {report.alcoa_record_sha256}"
     else:
-        _, SessionLocal = create_db_engine_and_sessionmaker(database_url)
-        _, model = load_calibrated_assets()
-        with SessionLocal() as db:
-            loaded = load_twin_session(db, report.session_id, model)
+        engine, SessionLocal = create_db_engine_and_sessionmaker(database_url)
+        try:
+            _, model = load_calibrated_assets()
+            with SessionLocal() as db:
+                loaded = load_twin_session(db, report.session_id, model)
+        finally:
+            engine.dispose()
         if loaded is None:
             alcoa_detail = f"Session '{report.session_id}' not found in persistence ledger."
         else:
@@ -223,7 +226,8 @@ def evaluate_capa_report(
     )
 
     overall_score = round((traj_eval.score + grounding_eval.score + alcoa_eval.score) / 3.0, 4)
-    overall_passed = traj_eval.passed and grounding_eval.passed and alcoa_eval.passed
+    guardrail_ok = bool(getattr(report, "guardrail_passed", True))
+    overall_passed = traj_eval.passed and grounding_eval.passed and alcoa_eval.passed and guardrail_ok
 
     return CapaEvaluationReport(
         overall_passed=overall_passed,

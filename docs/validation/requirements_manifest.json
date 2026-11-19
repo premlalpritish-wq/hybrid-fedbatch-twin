@@ -1,0 +1,495 @@
+{
+  "schema_version": "rtm_v1",
+  "system_name": "hybrid-fedbatch-twin",
+  "baseline_commit": "6103d3d",
+  "requirements": [
+    {
+      "req_id": "REQ-PHY-01",
+      "subsystem": "Mechanistic & Hybrid Physics",
+      "risk_tier": "HIGH",
+      "csa_assurance_level": "Scripted Rigorous + Unit Verification",
+      "title": "Non-Negative Mass Balance & Overflow Stoichiometry",
+      "description": "Preserve non-negative bioreactor states across substrate/DO starvation and couple glucose overflow to acetate/oxygen stoichiometry.",
+      "source_refs": [
+        {
+          "path": "hybrid_fedbatch_twin/mechanistic.py",
+          "symbols": ["BioreactorParams", "bioreactor_rhs", "compute_rates", "simulate_bioreactor"]
+        }
+      ],
+      "test_refs": [
+        "tests/test_hybrid_twin.py::test_boundary_nonnegativity_and_overflow_stoichiometry"
+      ]
+    },
+    {
+      "req_id": "REQ-PHY-02",
+      "subsystem": "Mechanistic & Hybrid Physics",
+      "risk_tier": "HIGH",
+      "csa_assurance_level": "Scripted Rigorous + Scale Invariance Check",
+      "title": "Geometric Scale-Up & Intensive Hydrodynamic Invariance (5 L to 1000 L)",
+      "description": "Transfer calibrated 5 L kinetics to 50 L and 1000 L vessels via intensive (P_g/V, v_tip, v_s) features without volume leakage.",
+      "source_refs": [
+        {
+          "path": "hybrid_fedbatch_twin/mechanistic.py",
+          "symbols": ["compute_hydrodynamics", "default_operating_inputs", "disturbance_profile"]
+        }
+      ],
+      "test_refs": [
+        "tests/test_hybrid_twin.py::test_scale_invariance_1000L",
+        "tests/test_hybrid_twin.py::test_1000L_default_operating_inputs_and_disturbance_scaling",
+        "tests/test_contracts_and_roundtrips.py::test_stiff_van_loan_ekf_blind_disturbance_and_api_ood_fallback"
+      ]
+    },
+    {
+      "req_id": "REQ-PHY-03",
+      "subsystem": "Mechanistic & Hybrid Physics",
+      "risk_tier": "HIGH",
+      "csa_assurance_level": "Scripted Rigorous + Analytical Gradient Check",
+      "title": "Stage-1 iDoE Recovery, Indirect GAM-86 Adjoint Training & Output-Space UQ",
+      "description": "Recover 6 mechanistic parameters (kappa_rel=38.18) and train B=15 GAM-86 via exact VJP with zero X_d supervision and Bessel-corrected (ddof=1) output-space ensemble variance.",
+      "source_refs": [
+        {
+          "path": "hybrid_fedbatch_twin/neural_ode.py",
+          "symbols": [
+            "recover_mechanistic_parameters",
+            "PhysicsInformedNeuralODE",
+            "PhysicsInformedNeuralODE.fit",
+            "PhysicsInformedNeuralODE.predict_full_with_uq",
+            "PhysicsInformedNeuralODE.predict_residuals",
+            "_trajectory_loss_and_grad",
+            "_prepare_batch_tensors"
+          ]
+        }
+      ],
+      "test_refs": [
+        "tests/test_hybrid_twin.py::test_vjp_gradient_matches_central_fd",
+        "tests/test_hybrid_twin.py::test_stage1_parameter_recovery_and_conditioning",
+        "tests/test_hybrid_twin.py::test_gam86_indirect_training_no_xd_leakage_and_uq",
+        "tests/test_hybrid_twin.py::test_output_space_uq_ddof1_and_calibrated_predict_residuals"
+      ]
+    },
+    {
+      "req_id": "REQ-EKF-01",
+      "subsystem": "EKF State Estimator & ALCOA+ Ledger",
+      "risk_tier": "HIGH",
+      "csa_assurance_level": "Scripted Rigorous + Numerical Stability Check",
+      "title": "Van Loan Discretization & Stiff Continuous-Discrete EKF",
+      "description": "Propagate state via stiff Radau ODE and covariance via exact scaling-and-squaring Van Loan discretization (_discretize_linear_gaussian) with epistemic Q_ep.",
+      "source_refs": [
+        {
+          "path": "hybrid_fedbatch_twin/estimator.py",
+          "symbols": [
+            "_discretize_linear_gaussian",
+            "HybridExtendedKalmanFilter",
+            "HybridExtendedKalmanFilter.predict",
+            "HybridExtendedKalmanFilter.update"
+          ]
+        }
+      ],
+      "test_refs": [
+        "tests/test_contracts_and_roundtrips.py::test_stiff_van_loan_ekf_blind_disturbance_and_api_ood_fallback",
+        "tests/test_hybrid_twin.py::test_ekf_expm_validation_and_sensor_parity",
+        "tests/test_hybrid_twin.py::test_stiff_van_loan_ekf_nis_and_do_crash_detection"
+      ]
+    },
+    {
+      "req_id": "REQ-EKF-02",
+      "subsystem": "EKF State Estimator & ALCOA+ Ledger",
+      "risk_tier": "HIGH",
+      "csa_assurance_level": "Scripted Rigorous + Fault Injection",
+      "title": "Dual Mahalanobis DoV + NIS/SPE Undecided Gating & SQLite Persistence",
+      "description": "Gate ML trust using Mahalanobis D_M and innovation chi-square NIS/SPE thresholds with persistence streak and full SQLite ekf_gate_state_json round-trip recovery.",
+      "source_refs": [
+        {
+          "path": "hybrid_fedbatch_twin/estimator.py",
+          "symbols": ["HybridExtendedKalmanFilter.evaluate_gate"]
+        },
+        {
+          "path": "api/db.py",
+          "symbols": ["save_twin_session", "load_twin_session"]
+        }
+      ],
+      "test_refs": [
+        "tests/test_contracts_and_roundtrips.py::test_db_gate_custom_thresholds_df2_boundary_and_streak_reset",
+        "tests/test_contracts_and_roundtrips.py::test_db_legacy_null_ekf_gate_state_reconstruction",
+        "tests/test_service_and_mcp.py::test_db_gate_roundtrip_lims_breach_df2_and_spe_streak",
+        "tests/test_hybrid_twin.py::test_dual_ood_residual_gate_and_controller_safe_fallback"
+      ]
+    },
+    {
+      "req_id": "REQ-EKF-03",
+      "subsystem": "EKF State Estimator & ALCOA+ Ledger",
+      "risk_tier": "HIGH",
+      "csa_assurance_level": "Scripted Rigorous + Tamper Detection",
+      "title": "Retrodictive LIMS Replay & Tamper-Evident SHA-256 ALCOA+ Chain",
+      "description": "Replay delayed at-line LIMS samples chronologically, preserve pre/post deltas, verify prev_entry_sha256 chaining, and support safe ?max_entries slicing.",
+      "source_refs": [
+        {
+          "path": "hybrid_fedbatch_twin/estimator.py",
+          "symbols": [
+            "verify_audit_chain",
+            "BioreactorDigitalTwin.ingest_atline_assay",
+            "BioreactorDigitalTwin.to_audit_record",
+            "BioreactorDigitalTwin.verify_audit_record"
+          ]
+        }
+      ],
+      "test_refs": [
+        "tests/test_contracts_and_roundtrips.py::test_db_audit_max_entries_slicing_hashing_and_api_query",
+        "tests/test_service_and_mcp.py::test_fastapi_twin_lifecycle_and_alcoa_persistence_across_reload",
+        "tests/test_service_and_mcp.py::test_legacy_unchained_db_migration_flags_chain_invalid",
+        "tests/test_hybrid_twin.py::test_alcoa_hash_chain_tamper_detection_and_lims_replay_deltas",
+        "tests/test_hybrid_twin.py::test_truncated_audit_record_verification_and_tamper_resistance"
+      ]
+    },
+    {
+      "req_id": "REQ-CTL-01",
+      "subsystem": "Supervisory Feed Control",
+      "risk_tier": "HIGH",
+      "csa_assurance_level": "Scripted Rigorous + Blind Fault Parity",
+      "title": "ML-Free Safe Fallback, Escalation Logging & u_plant/u_model Separation",
+      "description": "Engage ML-free conservative fallback feed on undecided OOD/residual breach, log CONTROL_ESCALATION, and keep controllers/EKFs blind to plant faults.",
+      "source_refs": [
+        {
+          "path": "hybrid_fedbatch_twin/controller.py",
+          "symbols": [
+            "ClosedLoopFeedController",
+            "ClosedLoopFeedController._compute_safe_fallback_feed",
+            "ClosedLoopFeedController.__call__",
+            "benchmark_controllers"
+          ]
+        },
+        {
+          "path": "hybrid_fedbatch_twin/estimator.py",
+          "symbols": ["run_twin_estimation_loop", "BioreactorDigitalTwin.compute_control_action"]
+        }
+      ],
+      "test_refs": [
+        "tests/test_contracts_and_roundtrips.py::test_ood_and_residual_gate_fallback_control_contracts",
+        "tests/test_hybrid_twin.py::test_benchmark_controllers_and_disturbance_rejection",
+        "tests/test_hybrid_twin.py::test_blind_actuator_disturbance_parity_and_fault_detection"
+      ]
+    },
+    {
+      "req_id": "REQ-API-01",
+      "subsystem": "Governed API & Truth Isolation",
+      "risk_tier": "HIGH",
+      "csa_assurance_level": "Scripted Contract + UI E2E",
+      "title": "Strict Truth Isolation (show_truth=False) Across API & Operator UI",
+      "description": "Prevent exposure of u_plant, true_states, plant_inputs, and oracle KPIs when show_truth=False across FastAPI, Streamlit AppTest, and ALCOA+ exports.",
+      "source_refs": [
+        {
+          "path": "api/schemas.py",
+          "symbols": ["contains_forbidden_oracle_keys", "sanitize_truth_payload", "SimulateRequest"]
+        },
+        {
+          "path": "api/main.py",
+          "symbols": ["create_app"]
+        },
+        {
+          "path": "app.py",
+          "symbols": ["build_dataframe", "make_state_chart", "build_audit_export_payload", "main"]
+        }
+      ],
+      "test_refs": [
+        "tests/test_contracts_and_roundtrips.py::test_app_truth_isolation_dataframe_charts_and_audit_export",
+        "tests/test_contracts_and_roundtrips.py::test_app_streamlit_main_truth_isolation_end_to_end",
+        "tests/test_service_and_mcp.py::test_truth_isolation_and_least_privilege_mcp_boundary"
+      ]
+    },
+    {
+      "req_id": "REQ-API-02",
+      "subsystem": "Governed API & Truth Isolation",
+      "risk_tier": "MEDIUM",
+      "csa_assurance_level": "Scripted Contract Verification",
+      "title": "Canonical PAT/LIMS Unit Normalization & Finite Range Validation",
+      "description": "Validate finite numeric bounds, enforce extra='forbid', and normalize %DO/mg/L, mL/m3/L, and mmol/L->g/L units deterministically.",
+      "source_refs": [
+        {
+          "path": "api/schemas.py",
+          "symbols": [
+            "CanonicalPatPayload",
+            "CanonicalPatPayload.to_normalized_pat_request",
+            "CanonicalLimsAssayPayload",
+            "CanonicalLimsAssayPayload.to_normalized_atline_request",
+            "PatIngestRequest",
+            "AtlineAssayRequest",
+            "ControlActionRequest"
+          ]
+        }
+      ],
+      "test_refs": [
+        "tests/test_contracts_and_roundtrips.py::test_fastapi_schema_validation_and_clean_checkout_investigate",
+        "tests/test_service_and_mcp.py::test_canonical_pat_lims_unit_conversions_and_range_validation"
+      ]
+    },
+    {
+      "req_id": "REQ-OT-01",
+      "subsystem": "OT & LIMS Ingestion Adapters",
+      "risk_tier": "HIGH",
+      "csa_assurance_level": "Scripted Negative & Round-Trip Testing",
+      "title": "Allotrope ASM, OPC-UA, MQTT & LIMS Adapters with Zero Silent Drops",
+      "description": "Normalize Allotrope ASM JSON, OPC-UA snapshots, MQTT telemetry, and LIMS batch assays into the ALCOA+ hash chain while explicitly quarantining malformed/bad-quality payloads.",
+      "source_refs": [
+        {
+          "path": "api/adapters.py",
+          "symbols": [
+            "AllotropeASMAdapter.parse",
+            "OpcUaSnapshotAdapter.parse",
+            "MqttTelemetryAdapter.parse",
+            "LimsBatchAssayAdapter.parse",
+            "normalize_adapter_payload",
+            "ingest_adapter_into_twin"
+          ]
+        }
+      ],
+      "test_refs": [
+        "tests/test_service_and_mcp.py::test_ot_lims_adapters_valid_roundtrips_and_quarantine_alcoa_chain"
+      ]
+    },
+    {
+      "req_id": "REQ-MCP-01",
+      "subsystem": "Least-Privilege MCP Boundary",
+      "risk_tier": "HIGH",
+      "csa_assurance_level": "Scripted Adversarial Boundary Testing",
+      "title": "Read-Only & Draft-Staging MCP Server with Shadow-Sandbox EKF Isolation",
+      "description": "Enforce read_only or draft_staging scopes on all registered MCP tools and reject live bioreactor setpoint, EKF DB state, oracle truth, or finalized QA mutations.",
+      "source_refs": [
+        {
+          "path": "mcp_server/server.py",
+          "symbols": [
+            "MCPPrivilegeError",
+            "MCP_TOOL_POLICY",
+            "FORBIDDEN_MUTATION_OPERATIONS",
+            "enforce_mcp_least_privilege",
+            "simulate_fedbatch_run",
+            "ingest_pat_and_estimate_state",
+            "replay_delayed_lims_assay",
+            "get_twin_state_readonly",
+            "get_audit_trail_readonly",
+            "stage_capa_draft",
+            "list_mcp_privilege_policy",
+            "search_uhlendorff_campaigns"
+          ]
+        }
+      ],
+      "test_refs": [
+        "tests/test_service_and_mcp.py::test_mcp_server_tools_and_uhlendorff_grounding",
+        "tests/test_service_and_mcp.py::test_1000L_api_defaults_and_uhlendorff_mcp_schema_compatibility",
+        "tests/test_service_and_mcp.py::test_truth_isolation_and_least_privilege_mcp_boundary",
+        "tests/test_contracts_and_roundtrips.py::test_uhlendorff_schema_contract_with_mcp_live_synthetic_and_legacy"
+      ]
+    },
+    {
+      "req_id": "REQ-AGT-01",
+      "subsystem": "CAPA Deviation Agent & Guardrails",
+      "risk_tier": "HIGH",
+      "csa_assurance_level": "Scripted Workflow + Fault Injection",
+      "title": "5-Step LangGraph Deviation/CAPA Workflow & Deterministic Guardrails",
+      "description": "Execute excursion ingestion, counterfactual & empirical retrieval, zero-secret deterministic CAPA drafting, deterministic citation/numeric/schema guardrails, and QA gate routing.",
+      "source_refs": [
+        {
+          "path": "agents/deviation_graph.py",
+          "symbols": [
+            "DeterministicCiCapaProvider",
+            "DeviationCapaReport",
+            "build_deviation_graph",
+            "run_governed_capa_workflow",
+            "run_deviation_investigation"
+          ]
+        },
+        {
+          "path": "agents/guardrails.py",
+          "symbols": ["GroundedClaim", "GuardrailResult", "build_evidence_context", "validate_capa_draft"]
+        },
+        {
+          "path": "agents/observability.py",
+          "symbols": ["ExecutionTrace", "CapaEvaluationReport", "evaluate_capa_report"]
+        }
+      ],
+      "test_refs": [
+        "tests/test_agent_evals.py::test_deviation_graph_and_faithfulness_eval_offline",
+        "tests/test_agent_evals.py::test_fastapi_investigate_endpoint",
+        "tests/test_agent_evals.py::test_deterministic_guardrails_reject_ungrounded_and_mismatched_drafts"
+      ]
+    },
+    {
+      "req_id": "REQ-AGT-02",
+      "subsystem": "CAPA Deviation Agent & Guardrails",
+      "risk_tier": "MEDIUM",
+      "csa_assurance_level": "Scripted Shadow Evaluation + Statistical CI",
+      "title": "Offline Shadow-Mode UCR & Wilson 95% Confidence Interval Harness",
+      "description": "Evaluate Unsupported Claim Rate (UCR) and Wilson 95% CI across 8 multi-scale excursion cases offline without mutating live twin sessions.",
+      "source_refs": [
+        {
+          "path": "agents/shadow_eval.py",
+          "symbols": [
+            "wilson_ci_95",
+            "default_shadow_excursion_cases",
+            "FaultInjectingCapaProvider",
+            "run_shadow_evaluation_suite"
+          ]
+        }
+      ],
+      "test_refs": [
+        "tests/test_agent_evals.py::test_shadow_evaluation_harness_ucr_and_wilson_ci_offline"
+      ]
+    },
+    {
+      "req_id": "REQ-P11-01",
+      "subsystem": "21 CFR Part 11 AI Governance",
+      "risk_tier": "HIGH",
+      "csa_assurance_level": "Scripted Rigorous + Cryptographic Tamper & Replay Tests",
+      "title": "4-Part 21 CFR Part 11 AI Decision Record, Server Evidence & Single-Use 2FA",
+      "description": "Bind immutable raw output + server context hash, structured human QA redlines, single-use 2FA e-signature, and SHA-256 hash chain with LLM execution metadata.",
+      "source_refs": [
+        {
+          "path": "agents/part11.py",
+          "symbols": [
+            "Part11AiDecisionRecord",
+            "FinalizedRecordImmutabilityError",
+            "TwoFactorReplayError",
+            "validate_human_qa_id",
+            "compute_structured_redlines",
+            "build_part11_decision_record",
+            "verify_part11_decision_record",
+            "verify_part11_decision_chain"
+          ]
+        },
+        {
+          "path": "api/db.py",
+          "symbols": [
+            "save_staged_capa_draft",
+            "save_server_evidence_context",
+            "load_server_evidence_context",
+            "save_ai_decision_record",
+            "load_ai_decision_records"
+          ]
+        }
+      ],
+      "test_refs": [
+        "tests/test_agent_evals.py::test_part11_4part_ai_decision_record_redlines_2fa_and_tamper_resistance"
+      ]
+    },
+    {
+      "req_id": "REQ-ETL-01",
+      "subsystem": "Medallion ETL & Offline MLOps",
+      "risk_tier": "HIGH",
+      "csa_assurance_level": "Scripted Conservation & Lineage Verification",
+      "title": "Bronze -> Silver -> Gold Medallion Pipeline with Quarantine & SHA-256 Lineage",
+      "description": "Apply declarative schema, bounds, completeness, timestamp monotonicity, and recursive oracle isolation gates; quarantine invalid rows with reason codes and verify batch-grouped splits.",
+      "source_refs": [
+        {
+          "path": "mlops/medallion.py",
+          "symbols": [
+            "DataQualityPolicy",
+            "ingest_bronze",
+            "promote_bronze_to_silver",
+            "build_gold_features",
+            "run_medallion_pipeline",
+            "verify_medallion_lineage"
+          ]
+        }
+      ],
+      "test_refs": [
+        "tests/test_mlops_and_observability.py::test_medallion_bronze_silver_gold_quarantine_and_lineage_tamper_detection"
+      ]
+    },
+    {
+      "req_id": "REQ-MLO-01",
+      "subsystem": "Medallion ETL & Offline MLOps",
+      "risk_tier": "HIGH",
+      "csa_assurance_level": "Scripted Promotion Gate & Ledger Tamper Testing",
+      "title": "Offline Prefect/MLflow-Compatible Training, Evaluation & Staging Registry",
+      "description": "Record dataset split SHA-256 digests and calibrated metrics (kd_r2, Uhlendorff score), gate promotion to PROMOTED_STAGING vs REJECTED, and verify run-manifest/ledger SHA-256 parity.",
+      "source_refs": [
+        {
+          "path": "mlops/registry.py",
+          "symbols": [
+            "PromotionCriteria",
+            "LocalMlflowCompatibleTracker",
+            "LocalMlflowCompatibleTracker.verify_registry_ledger",
+            "run_offline_training_and_registration_flow"
+          ]
+        }
+      ],
+      "test_refs": [
+        "tests/test_mlops_and_observability.py::test_offline_prefect_mlflow_training_registry_promotion_and_rejection"
+      ]
+    },
+    {
+      "req_id": "REQ-OBS-01",
+      "subsystem": "Telemetry & Observability",
+      "risk_tier": "MEDIUM",
+      "csa_assurance_level": "Scripted Integration Testing",
+      "title": "Offline-Safe OpenTelemetry & Prometheus Telemetry Hooks",
+      "description": "Record EKF innovation (NIS/SPE), fallback triggers, API latency histograms, MCP privilege rejections, Medallion quarantines, and agent guardrail rejections via /metrics and OTel spans.",
+      "source_refs": [
+        {
+          "path": "mlops/telemetry.py",
+          "symbols": [
+            "TwinTelemetryRecorder",
+            "get_telemetry_recorder",
+            "record_ekf_step",
+            "record_control_fallback",
+            "record_api_request",
+            "record_agent_guardrail_rejection",
+            "record_mcp_privilege_rejection",
+            "record_medallion_quarantine"
+          ]
+        }
+      ],
+      "test_refs": [
+        "tests/test_mlops_and_observability.py::test_opentelemetry_prometheus_telemetry_hooks_and_metrics_endpoint"
+      ]
+    },
+    {
+      "req_id": "REQ-HYG-01",
+      "subsystem": "Repository Hygiene & External Validation",
+      "risk_tier": "MEDIUM",
+      "csa_assurance_level": "Automated CI Guardrail",
+      "title": "Artifact Parity, Uhlendorff CHO-K1 Benchmark & Honest Maturity Guardrails",
+      "description": "Verify git hygiene, twin_bundle/results_summary ALCOA+ parity, Uhlendorff 2026 validation integrity (8.61/10.00 GO), and absence of prohibited Portela Level 3 claims.",
+      "source_refs": [
+        {
+          "path": "scripts/verify_repo_hygiene.py",
+          "symbols": [
+            "check_git_hygiene",
+            "check_twin_bundle_artifact",
+            "check_results_summary_and_audit",
+            "check_uhlendorff_validation_artifact",
+            "check_honest_maturity_labels",
+            "run_all_checks"
+          ]
+        },
+        {
+          "path": "stress_test_uhlendorff.py",
+          "symbols": ["is_biophysical_anomaly_run", "compute_duplicate_noise_floor", "run_pade_ekf_stress_test"]
+        }
+      ],
+      "test_refs": [
+        "tests/test_repo_hygiene.py::test_repo_git_and_artifact_hygiene_passes",
+        "tests/test_repo_hygiene.py::test_repo_hygiene_cli_exits_zero",
+        "tests/test_repo_hygiene.py::test_artifact_validators_detect_tampering",
+        "tests/test_hybrid_twin.py::test_stress_test_cleanliness_and_honest_maturity_labels"
+      ]
+    },
+    {
+      "req_id": "REQ-VAL-01",
+      "subsystem": "GxP Validation & Regulatory Traceability",
+      "risk_tier": "MEDIUM",
+      "csa_assurance_level": "Automated AST & Drift Verification",
+      "title": "Automated Requirements Traceability Matrix & Documentation Integrity",
+      "description": "Programmatically verify every requirement maps to existing AST symbols and pytest functions with zero broken links, zero orphans, and zero prohibited maturity labels.",
+      "source_refs": [
+        {
+          "path": "scripts/generate_rtm.py",
+          "symbols": ["validate_rtm", "render_rtm_markdown", "main"]
+        }
+      ],
+      "test_refs": [
+        "tests/test_validation_rtm.py::test_rtm_generation_check_and_tamper_detection",
+        "tests/test_validation_rtm.py::test_validation_docs_citations_and_honest_maturity"
+      ]
+    }
+  ]
+}
